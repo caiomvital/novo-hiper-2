@@ -1,0 +1,903 @@
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { Plant, DeliveryDestination, DeliveryRecord, MainTab, CustomerOrder, OrderStatus, CashRegister } from './types';
+import { 
+  getStoredPlants, 
+  saveStoredPlants, 
+  getStoredDeliveries, 
+  saveStoredDeliveries, 
+  getStoredDestinations,
+  saveStoredDestinations,
+  getStoredOrders,
+  saveStoredOrders,
+  createNewRandomOrder,
+  REALISTIC_PLANT_PRESETS,
+  formatPrice,
+  getStoredCashRegister,
+  saveStoredCashRegister,
+  recordSale
+} from './services/storage';
+import { sounds } from './services/sound';
+import { Header } from './components/Header';
+import { PlantCard } from './components/PlantCard';
+import { EmptyState } from './components/EmptyState';
+import { PlantFormModal } from './components/PlantFormModal';
+import { PlantDetailModal } from './components/PlantDetailModal';
+import { DeleteConfirmModal } from './components/DeleteConfirmModal';
+import { DeliveryMap } from './components/DeliveryMap';
+import { OrdersView } from './components/OrdersView';
+import { CashRegisterModal } from './components/CashRegisterModal';
+import { LoginScreen } from './components/LoginScreen';
+import { OfflineBanner } from './components/OfflineBanner';
+import { BackendStatusBanner } from './components/BackendStatusBanner';
+import { DeliveryGameView } from './components/game/DeliveryGameView';
+import { checkIsAuthenticated, logout as performLogout } from './services/auth';
+import { api } from './services/api';
+import { runAutomaticLocalStorageMigration, MigrationResult } from './services/migration';
+import { Plus, Search, CheckCircle2, Store, Truck, DollarSign, Package, ShoppingBag, Coins, Gamepad2 } from 'lucide-react';
+
+export default function App() {
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => checkIsAuthenticated());
+  const [plants, setPlants] = useState<Plant[]>(() => getStoredPlants());
+  const [deliveries, setDeliveries] = useState<DeliveryRecord[]>(() => getStoredDeliveries());
+  const [destinations, setDestinations] = useState<DeliveryDestination[]>(() => getStoredDestinations());
+  const [orders, setOrders] = useState<CustomerOrder[]>(() => getStoredOrders());
+  const [cashRegister, setCashRegister] = useState<CashRegister>(() => getStoredCashRegister());
+  const [isCashModalOpen, setIsCashModalOpen] = useState(false);
+  const [activeOrder, setActiveOrder] = useState<CustomerOrder | null>(null);
+  const [activeTab, setActiveTab] = useState<MainTab>('catalogo');
+  const [selectedPlant, setSelectedPlant] = useState<Plant | null>(null);
+  const [editingPlant, setEditingPlant] = useState<Plant | null>(null);
+  const [isFormOpen, setIsFormOpen] = useState(false);
+  const [plantToDelete, setPlantToDelete] = useState<Plant | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [isBackendConnected, setIsBackendConnected] = useState<boolean>(false);
+  const [migrationResult, setMigrationResult] = useState<MigrationResult | null>(null);
+  const [isMigrating, setIsMigrating] = useState<boolean>(false);
+
+  // Inicializar e conectar ao backend Node.js + SQLite com migração segura do localStorage
+  useEffect(() => {
+    let isMounted = true;
+
+    async function initializeBackendSync() {
+      try {
+        const isHealthy = await api.checkHealth();
+        if (!isMounted) return;
+        setIsBackendConnected(isHealthy);
+
+        if (isHealthy) {
+          setIsMigrating(true);
+          const migRes = await runAutomaticLocalStorageMigration();
+          if (!isMounted) return;
+          setMigrationResult(migRes);
+          setIsMigrating(false);
+
+          // Carregar dados oficiais do SQLite
+          try {
+            const dbPlants = await api.getPlants();
+            if (isMounted && dbPlants.length > 0) {
+              setPlants(dbPlants);
+            }
+            const dbOrders = await api.getOrders();
+            if (isMounted && dbOrders.length > 0) {
+              setOrders(dbOrders);
+            }
+            const dbCash = await api.getCashRegister();
+            if (isMounted && dbCash) {
+              setCashRegister(dbCash);
+            }
+            const dbDeliveries = await api.getDeliveries();
+            if (isMounted && dbDeliveries.length > 0) {
+              setDeliveries(dbDeliveries);
+            }
+          } catch (fetchErr) {
+            console.warn('[Sync Backend]: Dados mantidos via localStorage de backup:', fetchErr);
+          }
+        }
+      } catch (err) {
+        if (isMounted) setIsBackendConnected(false);
+      }
+    }
+
+    initializeBackendSync();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  const handleManualMigration = async () => {
+    setIsMigrating(true);
+    const res = await runAutomaticLocalStorageMigration();
+    setMigrationResult(res);
+    setIsMigrating(false);
+    if (res.migrated) {
+      showToast('Dados do localStorage sincronizados no banco SQLite da VPS!');
+      try {
+        const dbPlants = await api.getPlants();
+        if (dbPlants.length > 0) setPlants(dbPlants);
+        const dbOrders = await api.getOrders();
+        if (dbOrders.length > 0) setOrders(dbOrders);
+        const dbCash = await api.getCashRegister();
+        setCashRegister(dbCash);
+      } catch {}
+    } else {
+      showToast(res.message);
+    }
+  };
+
+  // Gatilho: o fluxo contínuo de pedidos reais é ativado com o primeiro registro real de planta do usuário
+  const [hasRealPlantTrigger, setHasRealPlantTrigger] = useState<boolean>(() => {
+    try {
+      const stored = localStorage.getItem('novo_hiper_real_plant_registered');
+      if (stored === 'true') return true;
+      const initialPlants = getStoredPlants();
+      return initialPlants.some((p) => !p.isExample && !p.id?.startsWith('plant_preset_') && !p.id?.startsWith('demo_'));
+    } catch {
+      return false;
+    }
+  });
+
+  // Refs para manter dados atualizados no loop do timer sem recriar timers desnecessariamente
+  const plantsRef = useRef(plants);
+  const destinationsRef = useRef(destinations);
+  const ordersRef = useRef(orders);
+
+  useEffect(() => {
+    plantsRef.current = plants;
+  }, [plants]);
+
+  useEffect(() => {
+    destinationsRef.current = destinations;
+  }, [destinations]);
+
+  useEffect(() => {
+    ordersRef.current = orders;
+  }, [orders]);
+
+  // Sync to localStorage
+  useEffect(() => {
+    saveStoredPlants(plants);
+  }, [plants]);
+
+  useEffect(() => {
+    saveStoredDeliveries(deliveries);
+  }, [deliveries]);
+
+  useEffect(() => {
+    saveStoredDestinations(destinations);
+  }, [destinations]);
+
+  useEffect(() => {
+    saveStoredOrders(orders);
+  }, [orders]);
+
+  useEffect(() => {
+    saveStoredCashRegister(cashRegister);
+  }, [cashRegister]);
+
+  const showToast = (message: string) => {
+    setToastMessage(message);
+    setTimeout(() => {
+      setToastMessage(null);
+    }, 3200);
+  };
+
+  const handleOpenNewForm = () => {
+    sounds.playAddPlant();
+    setEditingPlant(null);
+    setIsFormOpen(true);
+  };
+
+  const handleOpenEditForm = (plant: Plant) => {
+    sounds.playEditPlant();
+    setEditingPlant(plant);
+    setIsFormOpen(true);
+    setSelectedPlant(null);
+  };
+
+  // Função para receber novos pedidos (manualmente ou via timer)
+  const handleReceiveNewOrder = useCallback((isAutomatic = false): CustomerOrder | null => {
+    const currentPlants = plantsRef.current;
+    const currentDestinations = destinationsRef.current;
+    const currentOrders = ordersRef.current;
+
+    // Regra 1 e 3: Verificar se há plantas cadastradas pelo usuário
+    const userPlants = currentPlants.filter(
+      (p) => !p.isExample && !p.id?.startsWith('plant_preset_') && !p.id?.startsWith('demo_')
+    );
+    if (userPlants.length === 0) {
+      if (!isAutomatic) {
+        showToast('Cadastre plantas no catálogo do Novo Hiper antes de receber novos pedidos.');
+      }
+      return null;
+    }
+
+    // Regra 4 e 5: Verificar se há plantas com estoque disponível
+    const availablePlants = userPlants.filter((p) => (p.stock ?? 0) > 0);
+    if (availablePlants.length === 0) {
+      if (!isAutomatic) {
+        showToast('Não há plantas com estoque disponível para novos pedidos. Reabasteça no catálogo!');
+      }
+      return null;
+    }
+
+    // Regras 2, 6 e 7: Usar somente plantas cadastradas no catálogo, com preço e foto do cadastro, sem alterar estoque
+    const result = createNewRandomOrder(currentPlants, currentDestinations, currentOrders);
+    if (result.success && result.order) {
+      const newOrder = result.order;
+      sounds.playBellRing();
+      setOrders((prev) => [newOrder, ...prev]);
+
+      if (isBackendConnected) {
+        api.createOrder(newOrder).catch((err) => {
+          console.warn('[Backend SQLite]: Erro ao registrar pedido:', err);
+        });
+      }
+
+      if (isAutomatic) {
+        showToast(`🔔 Trim-trim! Novo pedido recebido de ${newOrder.customerName}: ${newOrder.plantName}!`);
+      } else {
+        showToast(`🔔 Novo pedido #${newOrder.orderNumber}! ${newOrder.customerName} encomendou ${newOrder.plantName}.`);
+      }
+
+      return newOrder;
+    } else {
+      if (!isAutomatic) {
+        if (result.reason === 'no_plants') {
+          showToast('Cadastre plantas no catálogo do Novo Hiper antes de receber novos pedidos.');
+        } else if (result.reason === 'no_stock') {
+          showToast('Não há plantas com estoque disponível para novos pedidos. Reabasteça no catálogo!');
+        } else {
+          showToast('Adicione destinos no mapa para receber pedidos.');
+        }
+      }
+      return null;
+    }
+  }, []);
+
+  // Timer ao longo do dia para receber pedidos de forma natural (ativado após o primeiro registro real de planta e somente autenticado)
+  useEffect(() => {
+    if (!hasRealPlantTrigger || !isAuthenticated) return;
+
+    let timeoutId: NodeJS.Timeout;
+
+    const scheduleNextOrder = () => {
+      // Intervalo natural entre 60 e 90 segundos para parecer fluxo vivo de clientes
+      const nextDelayMs = 60000 + Math.floor(Math.random() * 30000);
+
+      timeoutId = setTimeout(() => {
+        const pendingOrdersCount = ordersRef.current.filter((o) => o.status !== 'entregue').length;
+        const availablePlantsCount = plantsRef.current.filter((p) => (p.stock ?? 0) > 0).length;
+
+        // Limita o acúmulo a 5 pedidos pendentes e exige estoque disponível
+        if (pendingOrdersCount < 5 && availablePlantsCount > 0) {
+          handleReceiveNewOrder(true);
+        }
+
+        scheduleNextOrder();
+      }, nextDelayMs);
+    };
+
+    scheduleNextOrder();
+
+    return () => {
+      clearTimeout(timeoutId);
+    };
+  }, [hasRealPlantTrigger, isAuthenticated, handleReceiveNewOrder]);
+
+  const handleSavePlant = (
+    plantData: Omit<Plant, 'id' | 'createdAt'> & { id?: string; createdAt?: number }
+  ) => {
+    if (plantData.id) {
+      sounds.playEditPlant();
+      const updatedPayload = {
+        name: plantData.name,
+        species: plantData.species,
+        price: plantData.price,
+        photoUrl: plantData.photoUrl,
+        careTag: plantData.careTag,
+        stock: plantData.stock !== undefined ? plantData.stock : 5,
+      };
+
+      setPlants((prev) =>
+        prev.map((p) =>
+          p.id === plantData.id
+            ? {
+                ...p,
+                ...updatedPayload,
+                isExample: false,
+              }
+            : p
+        )
+      );
+      showToast(`Planta "${plantData.name}" atualizada com sucesso.`);
+
+      if (isBackendConnected) {
+        api.updatePlant(plantData.id, updatedPayload).catch((err) => {
+          console.warn('[Backend SQLite]: Erro ao atualizar planta:', err);
+        });
+      }
+    } else {
+      sounds.playSavePlant();
+      const plantId = 'planta_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7);
+      const newPlant: Plant = {
+        id: plantId,
+        name: plantData.name,
+        species: plantData.species,
+        price: plantData.price,
+        photoUrl: plantData.photoUrl,
+        createdAt: Date.now(),
+        careTag: plantData.careTag,
+        stock: plantData.stock !== undefined ? plantData.stock : 5,
+        isExample: false,
+      };
+      setPlants((prev) => [newPlant, ...prev]);
+      showToast(`Planta "${plantData.name}" cadastrada no catálogo do Novo Hiper.`);
+
+      if (isBackendConnected) {
+        api.createPlant(newPlant).catch((err) => {
+          console.warn('[Backend SQLite]: Erro ao cadastrar planta:', err);
+        });
+      }
+
+      // Ativar o gatilho se este for o primeiro cadastro real de uma planta do usuário
+      if (!hasRealPlantTrigger) {
+        setHasRealPlantTrigger(true);
+        try {
+          localStorage.setItem('novo_hiper_real_plant_registered', 'true');
+        } catch {}
+        // O primeiro cliente descobre a nova planta e faz um pedido após 15 segundos!
+        setTimeout(() => {
+          handleReceiveNewOrder(true);
+        }, 15000);
+      }
+    }
+  };
+
+  const handleDeleteConfirm = () => {
+    if (!plantToDelete) return;
+    const name = plantToDelete.name;
+    const plantId = plantToDelete.id;
+    setPlants((prev) => prev.filter((p) => p.id !== plantId));
+    if (selectedPlant?.id === plantId) {
+      setSelectedPlant(null);
+    }
+    setPlantToDelete(null);
+    showToast(`Planta "${name}" removida do estoque.`);
+
+    if (isBackendConnected) {
+      api.deletePlant(plantId).catch((err) => {
+        console.warn('[Backend SQLite]: Erro ao excluir planta:', err);
+      });
+    }
+  };
+
+  const handleAddExample = () => {
+    const nextPreset = REALISTIC_PLANT_PRESETS[plants.length % REALISTIC_PLANT_PRESETS.length];
+    const examplePlant: Plant = {
+      id: 'demo_' + Date.now(),
+      name: nextPreset.name,
+      species: nextPreset.species,
+      price: nextPreset.price,
+      photoUrl: nextPreset.imageUrl,
+      createdAt: Date.now(),
+      careTag: nextPreset.careTag,
+      stock: 5,
+      isExample: true,
+    };
+    setPlants((prev) => [examplePlant, ...prev]);
+    showToast(`Amostra de "${nextPreset.name}" adicionada ao catálogo.`);
+  };
+
+  const handleDeliveryComplete = (record: DeliveryRecord, linkedOrderId?: string) => {
+    // 1. Record delivery history
+    setDeliveries((prev) => [record, ...prev]);
+
+    // 2. Decrement stock for delivered plant (cannot drop below 0)
+    setPlants((prev) =>
+      prev.map((p) => {
+        if (p.id === record.plantId) {
+          const currentStock = p.stock ?? 1;
+          const nextStock = Math.max(0, currentStock - 1);
+          return { ...p, stock: nextStock };
+        }
+        return p;
+      })
+    );
+
+    // 3. Register sale in virtual cash register
+    const updatedRegister = recordSale(cashRegister, {
+      deliveryId: record.id,
+      plantId: record.plantId,
+      plantName: record.plantName,
+      plantPhotoUrl: record.plantPhotoUrl,
+      value: record.plantPrice,
+      orderId: linkedOrderId,
+      customerName: linkedOrderId ? record.destinationName : undefined,
+      destinationName: record.destinationName,
+    });
+    setCashRegister(updatedRegister);
+    sounds.playCashRegister();
+
+    // 4. Update order status if delivery was for a specific customer order
+    if (linkedOrderId) {
+      setOrders((prev) =>
+        prev.map((o) =>
+          o.id === linkedOrderId ? { ...o, status: 'entregue', completedAt: Date.now() } : o
+        )
+      );
+      showToast(`Pedido de ${record.destinationName} entregue! +${formatPrice(record.plantPrice)} no Caixa Virtual.`);
+    } else {
+      showToast(`Entrega de "${record.plantName}" concluída! +${formatPrice(record.plantPrice)} no Caixa Virtual.`);
+    }
+
+    // 5. Persistir entrega e transação no backend SQLite com validação
+    if (isBackendConnected) {
+      if (linkedOrderId) {
+        api.startDelivery(linkedOrderId)
+          .then((del) => {
+            if (del?.id) {
+              return api.finishDelivery(del.id);
+            }
+          })
+          .catch((err) => {
+            console.warn('[Backend SQLite]: Registro de entrega processado ou em andamento:', err);
+          });
+      } else {
+        api.registerCashTransaction({
+          amount: record.plantPrice,
+          type: 'credit',
+          description: `Entrega de ${record.plantName}`,
+        }).catch((err) => {
+          console.warn('[Backend SQLite]: Erro ao registrar transação no caixa:', err);
+        });
+      }
+    }
+  };
+
+  const handleUpdateOrderStatus = (orderId: string, newStatus: OrderStatus) => {
+    setOrders((prev) =>
+      prev.map((o) => (o.id === orderId ? { ...o, status: newStatus } : o))
+    );
+    if (newStatus === 'preparando') {
+      showToast('Planta em preparo: regada e pronta para embalagem!');
+    } else if (newStatus === 'pronto') {
+      showToast('Pedido preparado com carinho! Pronto para entrega.');
+    }
+
+    if (isBackendConnected) {
+      api.updateOrderStatus(orderId, newStatus).catch((err) => {
+        console.warn('[Backend SQLite]: Erro ao atualizar status do pedido:', err);
+      });
+    }
+  };
+
+  const handleDispatchToMap = (order: CustomerOrder) => {
+    setActiveOrder(order);
+    setActiveTab('entregas');
+    showToast(`Pedido #${order.orderNumber} de ${order.customerName} despachado para o mapa!`);
+  };
+
+  const handleStartGameDelivery = (order: CustomerOrder) => {
+    setActiveOrder(order);
+    setActiveTab('jogo');
+    showToast(`Pedido #${order.orderNumber} iniciado no Mini-Jogo 2D! Vá até a loja pegar a planta.`);
+  };
+
+  const handleGameDelivery = (
+    orderId: string, 
+    plantId: string, 
+    value: number, 
+    customerName: string, 
+    destinationName: string
+  ) => {
+    const targetPlant = plants.find((p) => p.id === plantId);
+    const targetDest = destinations.find((d) => d.name === destinationName) || destinations[0];
+
+    const newDelivery: DeliveryRecord = {
+      id: `game-del-${Date.now()}`,
+      plantId,
+      plantName: targetPlant?.name || 'Muda de Planta',
+      plantPrice: value,
+      plantPhotoUrl: targetPlant?.photoUrl || '',
+      destinationId: targetDest?.id || 'dest-olinda',
+      destinationName: customerName,
+      destinationAddress: destinationName,
+      timestamp: Date.now(),
+      status: 'entregue'
+    };
+    handleDeliveryComplete(newDelivery, orderId);
+    showToast(`Entrega concluída! +${formatPrice(value)} adicionados ao caixa virtual.`);
+  };
+
+  const handleSaveDestination = (newDest: DeliveryDestination) => {
+    setDestinations((prev) => {
+      const exists = prev.some((d) => d.id === newDest.id);
+      if (exists) {
+        return prev.map((d) => (d.id === newDest.id ? newDest : d));
+      }
+      return [newDest, ...prev];
+    });
+    showToast(`Endereço de "${newDest.name}" adicionado ao mapa com sucesso!`);
+  };
+
+  const handleDeleteDestination = (id: string) => {
+    const dest = destinations.find((d) => d.id === id);
+    setDestinations((prev) => prev.filter((d) => d.id !== id));
+    if (dest) {
+      showToast(`Endereço de "${dest.name}" removido do mapa.`);
+    }
+  };
+
+  const handleSendToDelivery = (plant: Plant) => {
+    setSelectedPlant(null);
+    setActiveOrder(null);
+    setActiveTab('entregas');
+    showToast(`Planta "${plant.name}" selecionada para entrega.`);
+  };
+
+  // Filter plants by search query
+  const filteredPlants = plants.filter((p) => {
+    const q = searchQuery.trim().toLowerCase();
+    return (
+      p.name.toLowerCase().includes(q) ||
+      (p.species && p.species.toLowerCase().includes(q))
+    );
+  });
+
+  // Calculate quick metrics for shopkeeper
+  const totalStockUnits = plants.reduce((sum, p) => sum + (p.stock ?? 0), 0);
+  const totalStockValue = plants.reduce((sum, p) => sum + (p.price * (p.stock ?? 1)), 0);
+  const pendingOrdersCount = orders.filter((o) => o.status !== 'entregue').length;
+
+  const handleLogout = () => {
+    sounds.playPlim();
+    performLogout();
+    setIsAuthenticated(false);
+    showToast('Você saiu da loja. Até logo, Bernardo!');
+  };
+
+  // Se não estiver autenticado, exibe a tela de login integrada
+  if (!isAuthenticated) {
+    return (
+      <LoginScreen
+        onLoginSuccess={() => {
+          setIsAuthenticated(true);
+          showToast('Bem-vindo à sua loja, Bernardo! 🌿');
+        }}
+      />
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-stone-50 text-stone-900 flex flex-col font-sans pb-16">
+      {/* Toast Notification */}
+      {toastMessage && (
+        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-70 max-w-sm w-[90%] bg-stone-900 text-white px-4 py-3 rounded-2xl shadow-xl flex items-center gap-2.5 text-xs sm:text-sm font-semibold border border-stone-700 animate-in fade-in slide-in-from-top-4">
+          <CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0" />
+          <span className="flex-1">{toastMessage}</span>
+        </div>
+      )}
+
+      {/* Offline Status Indicator */}
+      <OfflineBanner />
+
+      {/* Backend SQLite Connection & Migration Status */}
+      <BackendStatusBanner 
+        isBackendConnected={isBackendConnected}
+        migrationResult={migrationResult}
+        isMigrating={isMigrating}
+        onTriggerMigration={handleManualMigration}
+      />
+
+      {/* Header with Navigation, Sound, Logout and Caixa */}
+      <Header 
+        plantCount={totalStockUnits} 
+        deliveryCount={deliveries.length}
+        pendingOrdersCount={pendingOrdersCount}
+        cashBalance={cashRegister.balance}
+        activeTab={activeTab}
+        onTabChange={(tab) => {
+          setActiveTab(tab);
+          if (tab !== 'entregas') {
+            setActiveOrder(null);
+          }
+        }}
+        onAddPlant={handleOpenNewForm}
+        onOpenCashRegister={() => setIsCashModalOpen(true)}
+        onLogout={handleLogout}
+      />
+
+      {/* Main Content Area */}
+      <main className="max-w-5xl w-full mx-auto px-4 pt-4 sm:pt-6 flex-1">
+        {/* Realistic Shop Dashboard Banner */}
+        <section className="relative rounded-3xl bg-stone-900 text-white p-5 sm:p-7 shadow-sm border border-stone-800 overflow-hidden mb-6">
+          <div 
+            className="absolute inset-0 opacity-20 bg-cover bg-center pointer-events-none"
+            style={{
+              backgroundImage: `url('https://images.unsplash.com/photo-1470058869958-2a77ade41c02?auto=format&fit=crop&w=1200&q=80')`
+            }}
+          />
+          <div className="relative z-10 max-w-2xl">
+            <span className="inline-block text-[11px] font-bold text-emerald-400 tracking-wider uppercase mb-1">
+              Novo Hiper • Plantas e Jardinagem
+            </span>
+            <h2 className="text-2xl sm:text-3xl font-display font-extrabold tracking-tight leading-tight mb-2">
+              Painel do Dono da Loja
+            </h2>
+            <p className="text-stone-300 text-xs sm:text-sm leading-relaxed mb-5">
+              Gerencie o estoque de plantas da sua loja, atenda pedidos de clientes reais de Olinda, prepare os vasinhos e realize entregas no mapa.
+            </p>
+
+            {/* Shopkeeper Status Badges */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 sm:gap-3 max-w-2xl">
+              <div 
+                onClick={() => setActiveTab('catalogo')}
+                className="p-3 rounded-2xl bg-white/10 backdrop-blur-xs border border-white/10 cursor-pointer hover:bg-white/15 transition-colors"
+              >
+                <div className="flex items-center gap-1.5 text-stone-400 text-[11px] font-semibold mb-0.5">
+                  <Package className="w-3.5 h-3.5 text-emerald-400" />
+                  <span>Estoque</span>
+                </div>
+                <span className="text-base sm:text-lg font-display font-bold text-white">
+                  {totalStockUnits} {totalStockUnits === 1 ? 'vaso' : 'vasos'}
+                </span>
+                <span className="text-[10px] text-stone-400 block truncate">
+                  {plants.length} {plants.length === 1 ? 'espécie' : 'espécies'}
+                </span>
+              </div>
+
+              <div 
+                onClick={() => setActiveTab('pedidos')}
+                className="p-3 rounded-2xl bg-white/10 backdrop-blur-xs border border-white/10 cursor-pointer hover:bg-white/15 transition-colors relative"
+              >
+                <div className="flex items-center gap-1.5 text-stone-400 text-[11px] font-semibold mb-0.5">
+                  <ShoppingBag className="w-3.5 h-3.5 text-amber-400" />
+                  <span>Pedidos</span>
+                </div>
+                <span className="text-base sm:text-lg font-display font-bold text-white">
+                  {pendingOrdersCount} {pendingOrdersCount === 1 ? 'pendente' : 'pendentes'}
+                </span>
+                <span className="text-[10px] text-amber-300 block truncate">
+                  {orders.length} no histórico
+                </span>
+              </div>
+
+              <div 
+                onClick={() => setActiveTab('entregas')}
+                className="p-3 rounded-2xl bg-white/10 backdrop-blur-xs border border-white/10 cursor-pointer hover:bg-white/15 transition-colors"
+              >
+                <div className="flex items-center gap-1.5 text-stone-400 text-[11px] font-semibold mb-0.5">
+                  <Truck className="w-3.5 h-3.5 text-emerald-400" />
+                  <span>Entregas</span>
+                </div>
+                <span className="text-base sm:text-lg font-display font-bold text-white">
+                  {deliveries.length} feitas
+                </span>
+                <span className="text-[10px] text-emerald-300 block truncate">
+                  {destinations.length} endereços
+                </span>
+              </div>
+
+              <div 
+                onClick={() => {
+                  sounds.playPlim();
+                  setIsCashModalOpen(true);
+                }}
+                className="p-3 rounded-2xl bg-amber-500/20 backdrop-blur-xs border border-amber-400/30 cursor-pointer hover:bg-amber-500/25 transition-colors"
+                title="Clique para abrir o Caixa Virtual"
+              >
+                <div className="flex items-center gap-1.5 text-amber-300 text-[11px] font-semibold mb-0.5">
+                  <Coins className="w-3.5 h-3.5 text-amber-400" />
+                  <span>Caixa da Loja</span>
+                </div>
+                <span className="text-base sm:text-lg font-display font-bold text-amber-100 truncate block">
+                  {formatPrice(cashRegister.balance)}
+                </span>
+                <span className="text-[10px] text-amber-300/80 block truncate">
+                  {cashRegister.salesHistory.length} vendas
+                </span>
+              </div>
+            </div>
+
+            {/* Atalho para o Mini-Jogo 2D de Entregas */}
+            <div className="mt-4 pt-3.5 border-t border-white/10 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+              <div className="flex items-center gap-2">
+                <span className="text-base">🚴</span>
+                <p className="text-xs text-stone-300">
+                  <strong className="text-white">Mini-Jogo 2D em Olinda:</strong> Jogue como Bernardo entregando plantas pelas ladeiras históricas.
+                </p>
+              </div>
+              <button
+                id="hero-btn-play-game"
+                type="button"
+                onClick={() => {
+                  sounds.playPlim();
+                  setActiveTab('jogo');
+                }}
+                className="inline-flex items-center justify-center gap-2 px-3.5 py-1.5 rounded-xl bg-emerald-700 hover:bg-emerald-600 active:bg-emerald-800 text-white font-display font-bold text-xs shadow-xs transition-all cursor-pointer whitespace-nowrap self-start sm:self-auto"
+              >
+                <Gamepad2 className="w-3.5 h-3.5 text-emerald-200" />
+                <span>Jogar Entregas 2D</span>
+              </button>
+            </div>
+          </div>
+        </section>
+
+        {/* Tab 1: Plant Catalog */}
+        {activeTab === 'catalogo' && (
+          <div className="space-y-6">
+            {plants.length > 0 && (
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div>
+                  <h3 className="text-lg sm:text-xl font-display font-bold text-stone-900 flex items-center gap-2">
+                    <span>Catálogo de Plantas</span>
+                    <span className="text-xs font-sans font-semibold text-stone-600 px-2.5 py-0.5 rounded-full bg-stone-200">
+                      {filteredPlants.length} no estoque
+                    </span>
+                  </h3>
+                  <p className="text-xs text-stone-500">
+                    Selecione qualquer planta para visualizar detalhes técnicos ou despachar no mapa.
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <div className="relative w-full sm:w-64">
+                    <Search className="w-4 h-4 text-stone-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                    <input
+                      type="text"
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      placeholder="Buscar por nome ou espécie..."
+                      className="w-full pl-9 pr-3 py-2 rounded-xl bg-white border border-stone-200 focus:border-emerald-800 focus:ring-1 focus:ring-emerald-800 outline-none text-xs sm:text-sm placeholder:text-stone-400 transition-all"
+                    />
+                  </div>
+
+                  <button
+                    id="btn-add-more-plants"
+                    type="button"
+                    onClick={handleOpenNewForm}
+                    className="p-2 sm:px-3 sm:py-2 rounded-xl bg-emerald-800 hover:bg-emerald-900 text-white text-xs font-display font-bold flex items-center gap-1.5 shadow-2xs transition-colors cursor-pointer flex-shrink-0"
+                  >
+                    <Plus className="w-4 h-4" />
+                    <span className="hidden sm:inline">Adicionar</span>
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {plants.length === 0 ? (
+              <EmptyState
+                onAddPlant={handleOpenNewForm}
+              />
+            ) : filteredPlants.length === 0 ? (
+              <div className="text-center py-12 bg-white rounded-3xl border border-stone-200 p-6">
+                <p className="text-3xl mb-2">🌿</p>
+                <h4 className="text-base font-display font-bold text-stone-800">
+                  Nenhuma planta encontrada
+                </h4>
+                <p className="text-xs text-stone-500 mt-1">
+                  Não encontramos nenhuma planta com o termo "{searchQuery}".
+                </p>
+                <button
+                  onClick={() => {
+                    sounds.playPlim();
+                    setSearchQuery('');
+                  }}
+                  className="mt-3 px-3 py-1.5 bg-stone-100 hover:bg-stone-200 text-stone-800 rounded-lg text-xs font-bold transition-colors cursor-pointer"
+                >
+                  Limpar busca
+                </button>
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 sm:gap-4">
+                {filteredPlants.map((plant) => (
+                  <PlantCard
+                    key={plant.id}
+                    plant={plant}
+                    onSelect={(p) => setSelectedPlant(p)}
+                    onEdit={(p) => handleOpenEditForm(p)}
+                    onDeliver={(p) => handleSendToDelivery(p)}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Tab 2: Fictional Customer Orders View */}
+        {activeTab === 'pedidos' && (
+          <OrdersView
+            orders={orders}
+            plants={plants}
+            onUpdateOrderStatus={handleUpdateOrderStatus}
+            onDispatchToMap={handleDispatchToMap}
+            onStartGameDelivery={handleStartGameDelivery}
+            onReceiveNewOrder={handleReceiveNewOrder}
+            onGoToCatalog={() => setActiveTab('catalogo')}
+          />
+        )}
+
+        {/* Tab 3: Realistic Delivery Map & Dispatch Desk */}
+        {activeTab === 'entregas' && (
+          <DeliveryMap
+            plants={plants}
+            destinations={destinations}
+            onOpenAddPlant={handleOpenNewForm}
+            onDeliveryComplete={handleDeliveryComplete}
+            recentDeliveries={deliveries}
+            onSaveDestination={handleSaveDestination}
+            onDeleteDestination={handleDeleteDestination}
+            activeOrder={activeOrder}
+            onClearActiveOrder={() => setActiveOrder(null)}
+          />
+        )}
+
+        {/* Tab 4: 2D Delivery Mini-Game (Bernardo em Olinda) */}
+        {activeTab === 'jogo' && (
+          <DeliveryGameView
+            orders={orders}
+            plants={plants}
+            destinations={destinations}
+            cashRegister={cashRegister}
+            initialOrder={activeOrder}
+            onDeliverOrder={handleGameDelivery}
+            onCreateSimulationOrder={handleReceiveNewOrder}
+            onGoToCatalog={() => setActiveTab('catalogo')}
+            onGoToOrders={() => setActiveTab('pedidos')}
+            onUpdateCashRegister={(updated) => setCashRegister(updated)}
+          />
+        )}
+      </main>
+
+      {/* Floating Action Button on Mobile for Quick Add */}
+      {activeTab === 'catalogo' && plants.length > 0 && (
+        <div className="sm:hidden fixed bottom-5 right-5 z-30">
+          <button
+            id="btn-fab-add-plant"
+            onClick={handleOpenNewForm}
+            className="w-13 h-13 rounded-2xl bg-emerald-800 text-white shadow-lg flex items-center justify-center hover:bg-emerald-900 active:scale-95 transition-all cursor-pointer"
+            aria-label="Cadastrar nova planta"
+          >
+            <Plus className="w-6 h-6 stroke-[2.5]" />
+          </button>
+        </div>
+      )}
+
+      {/* Modals */}
+      <PlantFormModal
+        initialPlant={editingPlant}
+        isOpen={isFormOpen}
+        onClose={() => {
+          setIsFormOpen(false);
+          setEditingPlant(null);
+        }}
+        onSave={handleSavePlant}
+      />
+
+      <PlantDetailModal
+        plant={selectedPlant}
+        isOpen={!!selectedPlant}
+        onClose={() => setSelectedPlant(null)}
+        onEdit={(plant) => handleOpenEditForm(plant)}
+        onDeleteRequest={(plant) => setPlantToDelete(plant)}
+        onSendToDelivery={(plant) => handleSendToDelivery(plant)}
+      />
+
+      <DeleteConfirmModal
+        plant={plantToDelete}
+        isOpen={!!plantToDelete}
+        onClose={() => setPlantToDelete(null)}
+        onConfirm={handleDeleteConfirm}
+      />
+
+      <CashRegisterModal
+        isOpen={isCashModalOpen}
+        onClose={() => setIsCashModalOpen(false)}
+        cashRegister={cashRegister}
+        onUpdateRegister={(updated) => setCashRegister(updated)}
+      />
+    </div>
+  );
+}

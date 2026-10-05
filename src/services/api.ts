@@ -1,0 +1,341 @@
+import { Plant, DeliveryRecord, CustomerOrder, OrderStatus, CashRegister, SaleRecord } from '../types';
+
+const API_BASE = import.meta.env.VITE_API_URL || '/api';
+
+class ApiClient {
+  private async request<T>(endpoint: string, options?: RequestInit): Promise<T> {
+    const url = `${API_BASE}${endpoint}`;
+    const headers: Record<string, string> = {
+      ...(options?.headers as Record<string, string>),
+    };
+
+    if (!(options?.body instanceof FormData) && !headers['Content-Type']) {
+      headers['Content-Type'] = 'application/json';
+    }
+
+    const response = await fetch(url, {
+      ...options,
+      headers,
+    });
+
+    if (!response.ok) {
+      let errorMessage = `Erro na requisição (${response.status})`;
+      try {
+        const errJson = await response.json();
+        if (errJson?.error) {
+          errorMessage = errJson.error;
+        }
+      } catch {
+        // Ignora caso não seja JSON
+      }
+      throw new Error(errorMessage);
+    }
+
+    return response.json();
+  }
+
+  // Checagem de disponibilidade do backend
+  async checkHealth(): Promise<boolean> {
+    try {
+      const res = await fetch(`${API_BASE}/health`, { signal: AbortSignal.timeout(3000) });
+      return res.ok;
+    } catch {
+      return false;
+    }
+  }
+
+  // --- Plantas ---
+  async getPlants(): Promise<Plant[]> {
+    const data = await this.request<any[]>('/plants');
+    return data.map((p) => ({
+      id: p.id,
+      name: p.name,
+      price: Number(p.price),
+      stock: Number(p.stock_quantity ?? 0),
+      photoUrl: p.image_path,
+      species: p.species || undefined,
+      careTag: p.care_tag || undefined,
+      createdAt: p.created_at,
+    }));
+  }
+
+  async createPlant(plant: {
+    id?: string;
+    name: string;
+    price: number;
+    stock: number;
+    photoUrl: string;
+    species?: string;
+    careTag?: string;
+  }): Promise<Plant> {
+    const created = await this.request<any>('/plants', {
+      method: 'POST',
+      body: JSON.stringify({
+        id: plant.id,
+        name: plant.name,
+        price: plant.price,
+        stock_quantity: plant.stock,
+        image_path: plant.photoUrl,
+        species: plant.species,
+        care_tag: plant.careTag,
+      }),
+    });
+    return {
+      id: created.id,
+      name: created.name,
+      price: Number(created.price),
+      stock: Number(created.stock_quantity),
+      photoUrl: created.image_path,
+      species: created.species,
+      careTag: created.care_tag,
+      createdAt: created.created_at,
+    };
+  }
+
+  async updatePlant(id: string, plant: {
+    name: string;
+    price: number;
+    stock: number;
+    photoUrl: string;
+    species?: string;
+    careTag?: string;
+  }): Promise<Plant> {
+    const updated = await this.request<any>(`/plants/${encodeURIComponent(id)}`, {
+      method: 'PUT',
+      body: JSON.stringify({
+        name: plant.name,
+        price: plant.price,
+        stock_quantity: plant.stock,
+        image_path: plant.photoUrl,
+        species: plant.species,
+        care_tag: plant.careTag,
+      }),
+    });
+    return {
+      id: updated.id,
+      name: updated.name,
+      price: Number(updated.price),
+      stock: Number(updated.stock_quantity),
+      photoUrl: updated.image_path,
+      species: updated.species,
+      careTag: updated.care_tag,
+      createdAt: updated.created_at,
+    };
+  }
+
+  async deletePlant(id: string): Promise<boolean> {
+    const res = await this.request<{ success: boolean }>(`/plants/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+    });
+    return res.success;
+  }
+
+  async getStockSummary(): Promise<{ totalUnits: number; plants: any[] }> {
+    return this.request<{ totalUnits: number; plants: any[] }>('/plants/stock');
+  }
+
+  // --- Upload de Fotos das Plantas ---
+  async uploadImage(file: File): Promise<string> {
+    const formData = new FormData();
+    formData.append('image', file);
+
+    const res = await this.request<{ success: boolean; filePath: string }>('/upload', {
+      method: 'POST',
+      body: formData,
+    });
+
+    return res.filePath;
+  }
+
+  // --- Pedidos ---
+  async getOrders(): Promise<CustomerOrder[]> {
+    const data = await this.request<any[]>('/orders');
+    return data.map((o) => {
+      const firstItem = o.items?.[0];
+      return {
+        id: o.id,
+        orderNumber: o.order_number || 101,
+        customerId: o.customer_id,
+        customerName: o.customer_name || 'Cliente',
+        customerAvatarUrl: o.customer_avatar_url || '',
+        customerRole: o.customer_role || '',
+        customerAddress: o.customer_address || '',
+        destinationId: o.destination_id || 'dest_default',
+        plantId: firstItem?.plant_id || '',
+        plantName: firstItem?.plant_name || '',
+        plantPrice: Number(firstItem?.unit_price ?? o.total),
+        plantPhotoUrl: firstItem?.plant_photo_url || '',
+        quantity: Number(firstItem?.quantity || 1),
+        totalPrice: Number(o.total),
+        status: o.status as OrderStatus,
+        createdAt: o.created_at,
+        customerMessage: o.customer_message || undefined,
+      };
+    });
+  }
+
+  async createOrder(order: Partial<CustomerOrder>): Promise<CustomerOrder> {
+    const payload = {
+      id: order.id,
+      customer_id: order.customerId,
+      customer_name: order.customerName,
+      customer_avatar_url: order.customerAvatarUrl,
+      customer_role: order.customerRole,
+      customer_address: order.customerAddress,
+      destination_id: order.destinationId,
+      customer_message: order.customerMessage,
+      order_number: order.orderNumber,
+      items: [
+        {
+          plant_id: order.plantId,
+          quantity: order.quantity || 1,
+          unit_price: order.plantPrice,
+        },
+      ],
+    };
+
+    const o = await this.request<any>('/orders', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+
+    const firstItem = o.items?.[0];
+    return {
+      id: o.id,
+      orderNumber: o.order_number,
+      customerId: o.customer_id,
+      customerName: o.customer_name,
+      customerAvatarUrl: o.customer_avatar_url,
+      customerRole: o.customer_role,
+      customerAddress: o.customer_address,
+      destinationId: o.destination_id,
+      plantId: firstItem?.plant_id,
+      plantName: firstItem?.plant_name,
+      plantPrice: Number(firstItem?.unit_price),
+      plantPhotoUrl: firstItem?.plant_photo_url,
+      quantity: Number(firstItem?.quantity || 1),
+      totalPrice: Number(o.total),
+      status: o.status as OrderStatus,
+      createdAt: o.created_at,
+      customerMessage: o.customer_message,
+    };
+  }
+
+  async updateOrderStatus(id: string, status: OrderStatus): Promise<void> {
+    await this.request(`/orders/${encodeURIComponent(id)}`, {
+      method: 'PUT',
+      body: JSON.stringify({ status }),
+    });
+  }
+
+  // --- Entregas ---
+  async getDeliveries(): Promise<DeliveryRecord[]> {
+    const data = await this.request<any[]>('/deliveries');
+    return data.map((d) => ({
+      id: d.id,
+      plantId: '',
+      plantName: `Pedido #${d.order_number || d.order_id}`,
+      plantPrice: Number(d.order_total || 0),
+      plantPhotoUrl: '',
+      destinationId: d.destination_id || '',
+      destinationName: d.customer_name || 'Destino Olinda',
+      destinationAddress: d.customer_address || '',
+      timestamp: d.finished_at || d.created_at,
+      status: 'entregue',
+    }));
+  }
+
+  async startDelivery(orderId: string, gameState?: any): Promise<any> {
+    return this.request<any>('/deliveries/start', {
+      method: 'POST',
+      body: JSON.stringify({ order_id: orderId, game_state: gameState }),
+    });
+  }
+
+  async updateDeliveryState(deliveryId: string, gameState: any, status?: string): Promise<any> {
+    return this.request<any>(`/deliveries/${encodeURIComponent(deliveryId)}/state`, {
+      method: 'PATCH',
+      body: JSON.stringify({ game_state: gameState, status }),
+    });
+  }
+
+  async finishDelivery(deliveryId: string): Promise<{
+    success: boolean;
+    delivery: any;
+    order: any;
+    cashBalance: number;
+    totalSales: number;
+  }> {
+    return this.request<any>(`/deliveries/${encodeURIComponent(deliveryId)}/finish`, {
+      method: 'POST',
+    });
+  }
+
+  // --- Caixa ---
+  async getCashRegister(): Promise<CashRegister> {
+    const data = await this.request<any>('/cash');
+    const salesHistory: SaleRecord[] = (data.transactions || []).map((t: any) => ({
+      id: t.id,
+      orderId: t.order_id || undefined,
+      deliveryId: t.delivery_id || t.id,
+      plantId: '',
+      plantName: t.description || 'Venda',
+      value: Number(t.amount || 0),
+      timestamp: t.created_at,
+      customerName: t.customer_name || 'Cliente',
+      destinationName: t.destination_name || 'Olinda',
+    }));
+
+    return {
+      balance: Number(data.balance || 0),
+      totalSales: Number(data.totalSales || 0),
+      salesHistory,
+    };
+  }
+
+  async registerCashTransaction(data: {
+    order_id?: string;
+    delivery_id?: string;
+    amount: number;
+    type: 'credit' | 'debit' | 'upgrade_purchase' | 'adjustment';
+    description?: string;
+  }): Promise<any> {
+    return this.request<any>('/cash/transactions', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  // --- Jogo / Estado ---
+  async getGameCurrent(): Promise<any> {
+    return this.request<any>('/game/current');
+  }
+
+  async updateGameProgress(progress: {
+    active_order_id?: string;
+    active_delivery_id?: string;
+    player_x?: number;
+    player_y?: number;
+    mission_state?: any;
+    store_upgrades?: any;
+  }): Promise<any> {
+    return this.request<any>('/game/progress', {
+      method: 'PUT',
+      body: JSON.stringify(progress),
+    });
+  }
+
+  // --- Migração ---
+  async getMigrationStatus(): Promise<{ initialized: boolean; counts: any }> {
+    return this.request<{ initialized: boolean; counts: any }>('/migration/status');
+  }
+
+  async migrateFromLocalStorage(payload: any): Promise<any> {
+    return this.request<any>('/migration', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+}
+
+export const api = new ApiClient();

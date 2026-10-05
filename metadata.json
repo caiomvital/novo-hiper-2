@@ -1,0 +1,6 @@
+{
+  "name": "Novo Hiper",
+  "description": "Novo Hiper - Plantas e Jardinagem. Loja infantil de plantas com catálogo, fotos reais, gestão de pedidos de clientes e entregas no mapa de Olinda, Pernambuco.",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

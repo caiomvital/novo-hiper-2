@@ -1,0 +1,28 @@
+services:
+  novo-hiper:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: novo-hiper-app
+    restart: unless-stopped
+    ports:
+      # Permite definir porta externa customizada na VPS (ex: APP_PORT=3001) para evitar conflitos
+      - "${APP_PORT:-${PORT:-3000}}:3000"
+    volumes:
+      # Volume persistente para o banco SQLite (o banco não é descartado quando o container for recriado)
+      - ./data:/app/data
+      # Volume persistente para os arquivos de fotos das plantas
+      - ./uploads:/app/uploads
+    environment:
+      - NODE_ENV=${NODE_ENV:-production}
+      - PORT=3000
+      - DATA_DIR=${DATA_DIR:-/app/data}
+      - DATABASE_PATH=${DATABASE_PATH:-/app/data/novo-hiper.db}
+      - UPLOADS_DIR=${UPLOADS_DIR:-/app/uploads}
+      - CORS_ORIGIN=${CORS_ORIGIN:-*}
+    networks:
+      - novo-hiper-net
+
+networks:
+  novo-hiper-net:
+    driver: bridge
