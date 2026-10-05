@@ -7,7 +7,7 @@ services:
     restart: unless-stopped
     ports:
       # Permite definir porta externa customizada na VPS (ex: APP_PORT=3001) para evitar conflitos
-      - "${APP_PORT:-${PORT:-3000}}:3000"
+      - "127.0.0.1:${APP_PORT:-8504}:3000"
     volumes:
       # Volume persistente para o banco SQLite (o banco não é descartado quando o container for recriado)
       - ./data:/app/data

@@ -35,21 +35,23 @@ export async function runAutomaticLocalStorageMigration(): Promise<MigrationResu
       };
     }
 
-    // 2. Verificar se a migração já foi realizada com sucesso anteriormente
-    const isAlreadyMigrated = localStorage.getItem(MIGRATION_FLAG_KEY) === 'true';
-
-    // 3. Obter status atual do banco no servidor
+    // 2. Obter status atual do banco no servidor
     const serverStatus = await api.getMigrationStatus();
-    const hasDataOnServer = 
-      (serverStatus?.counts?.plants || 0) > 0 || 
+    const hasDataOnServer =
+      (serverStatus?.counts?.plants || 0) > 0 ||
       (serverStatus?.counts?.orders || 0) > 0;
 
-    // Se já foi migrado e o servidor tem dados, não é necessário re-migrar
-    if (isAlreadyMigrated && hasDataOnServer) {
+    // 3. Verificar se a migração já foi realizada com sucesso anteriormente.
+    // Esta flag é autoritativa: uma vez migrado, nunca migrar de novo,
+    // independentemente de o backend estar vazio ou ter dados. Um backend
+    // vazio é um estado válido (ex: banco zerado intencionalmente) e não deve
+    // ser confundido com "instalação nunca migrada".
+    const isAlreadyMigrated = localStorage.getItem(MIGRATION_FLAG_KEY) === 'true';
+    if (isAlreadyMigrated) {
       return {
         migrated: true,
-        message: 'Base SQLite já sincronizada e ativa como fonte principal.',
-        counts: serverStatus.counts,
+        message: 'Base SQLite é a fonte de verdade. Migração do localStorage já foi concluída anteriormente.',
+        counts: serverStatus?.counts,
       };
     }
 
