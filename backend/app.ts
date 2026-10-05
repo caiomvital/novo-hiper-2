@@ -1,5 +1,5 @@
 import express, { Request, Response, NextFunction } from 'express';
-import cors from 'cors';
+import cors, { CorsOptions } from 'cors';
 import path from 'path';
 import { plantsRouter } from './routes/plants';
 import { customersRouter } from './routes/customers';
@@ -9,20 +9,47 @@ import { cashRouter } from './routes/cash';
 import { gameRouter } from './routes/game';
 import { uploadRouter } from './routes/upload';
 import { migrationRouter } from './routes/migration';
+import { authRouter } from './routes/auth';
 import { getDb } from './db';
 
 export const app = express();
 
-// Configuração de CORS por variável de ambiente
-const allowedOrigins = process.env.CORS_ORIGIN 
-  ? process.env.CORS_ORIGIN.split(',').map((o) => o.trim())
-  : '*';
+const isProd = process.env.NODE_ENV === 'production';
+const rawOrigins = process.env.CORS_ORIGIN?.trim();
 
-app.use(cors({
-  origin: allowedOrigins,
+// Configuração rigorosa de CORS para produção:
+// Em produção, NÃO utilizar '*' como fallback silencioso.
+// Exige configuração explícita de CORS_ORIGIN na VPS.
+const corsOptions: CorsOptions = {
+  origin: (origin, callback) => {
+    // Permite requisições sem header Origin (same-origin, curl, mobile, server-side)
+    if (!origin) {
+      return callback(null, true);
+    }
+
+    if (rawOrigins && rawOrigins !== '*') {
+      const allowed = rawOrigins.split(',').map((o) => o.trim().toLowerCase());
+      if (allowed.includes(origin.toLowerCase())) {
+        return callback(null, true);
+      }
+      return callback(new Error(`[CORS] Origem não autorizada: ${origin}`));
+    }
+
+    if (isProd) {
+      // Em produção sem CORS_ORIGIN explícito, bloqueia acessos cross-origin não configurados
+      console.warn(`[CORS Aviso]: Tentativa de acesso bloqueada. CORS_ORIGIN não configurado explicitamente na VPS para origem: ${origin}`);
+      return callback(new Error('CORS_ORIGIN deve ser configurado explicitamente no arquivo .env em produção.'));
+    }
+
+    // Modo de desenvolvimento: permissivo para testes locais
+    return callback(null, true);
+  },
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
-}));
+  credentials: true,
+};
+
+app.use(cors(corsOptions));
 
 // Parser de JSON com limite seguro
 app.use(express.json({ limit: '15mb' }));
@@ -56,6 +83,7 @@ app.get('/api/health', async (_req: Request, res: Response) => {
 });
 
 // Rotas da API REST
+app.use('/api/auth', authRouter);
 app.use('/api/plants', plantsRouter);
 app.use('/api/customers', customersRouter);
 app.use('/api/orders', ordersRouter);
@@ -67,7 +95,7 @@ app.use('/api/migration', migrationRouter);
 
 // Tratamento central de erros
 app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
-  console.error('[API Error]:', err);
+  console.error('[API Error]:', err?.message || err);
   const status = err.status || 500;
   const message = err.message || 'Erro interno no servidor.';
   res.status(status).json({ error: message });

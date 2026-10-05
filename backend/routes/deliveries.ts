@@ -182,8 +182,28 @@ deliveriesRouter.patch('/:id/state', async (req: Request, res: Response) => {
       return;
     }
 
+    // Validação estrita de status intermediário:
+    // Uma entrega NUNCA pode transicionar para 'entregue' via PATCH /state.
+    // A transição para 'entregue' é exclusiva do endpoint atômico POST /deliveries/:id/finish.
+    let newStatus = delivery.status;
+    if (status !== undefined) {
+      if (status === 'entregue') {
+        res.status(400).json({ 
+          error: 'O status "entregue" só pode ser definido através do endpoint transacional POST /api/deliveries/:id/finish.' 
+        });
+        return;
+      }
+      const validIntermediateStatuses = ['iniciada', 'a_caminho'];
+      if (!validIntermediateStatuses.includes(status)) {
+        res.status(400).json({ 
+          error: `Status intermediário inválido (${status}). Valores permitidos para este endpoint: ${validIntermediateStatuses.join(', ')}.` 
+        });
+        return;
+      }
+      newStatus = status;
+    }
+
     const now = Date.now();
-    const newStatus = status || delivery.status;
     const gameStateJson = game_state !== undefined 
       ? (typeof game_state === 'string' ? game_state : JSON.stringify(game_state))
       : delivery.game_state;

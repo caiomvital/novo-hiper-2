@@ -79,11 +79,17 @@ DATA_DIR=/app/data
 DATABASE_PATH=/app/data/novo-hiper.db
 UPLOADS_DIR=/app/uploads
 
-# Domínio do seu aplicativo para cabeçalhos de CORS (ou * para liberar)
+# Domínio oficial do seu aplicativo para cabeçalhos de CORS (obrigatório em produção)
 CORS_ORIGIN=https://novohiper.seudominio.com.br
 
 # Prefixo da API REST para o frontend PWA
 VITE_API_URL=/api
+
+# Autenticação da Loja no Servidor (apenas hash, sem senhas no frontend)
+AUTH_USERNAME=Bernardo
+# Hash SHA-256 (opcional: deixe em branco para usar o padrão inicial ou gere com echo -n "novohiper_salt_SENHA" | sha256sum)
+AUTH_PASSWORD_HASH=
+AUTH_SALT=novohiper_salt_
 ```
 
 ---

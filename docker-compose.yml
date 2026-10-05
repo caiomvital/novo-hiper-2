@@ -19,7 +19,10 @@ services:
       - DATA_DIR=${DATA_DIR:-/app/data}
       - DATABASE_PATH=${DATABASE_PATH:-/app/data/novo-hiper.db}
       - UPLOADS_DIR=${UPLOADS_DIR:-/app/uploads}
-      - CORS_ORIGIN=${CORS_ORIGIN:-*}
+      - CORS_ORIGIN=${CORS_ORIGIN:-}
+      - AUTH_USERNAME=${AUTH_USERNAME:-Bernardo}
+      - AUTH_PASSWORD_HASH=${AUTH_PASSWORD_HASH:-}
+      - AUTH_SALT=${AUTH_SALT:-novohiper_salt_}
     networks:
       - novo-hiper-net
 

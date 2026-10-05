@@ -4,18 +4,18 @@ FROM node:22-bookworm-slim
 # Definir diretório de trabalho
 WORKDIR /app
 
-# Instalar dependências de sistema necessárias para sqlite3 e utilitários
+# Instalar utilitários de sistema necessários (sqlite3 para backups a quente e curl para healthcheck)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     sqlite3 \
     curl \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# Copiar arquivos de dependências
-COPY package.json package-lock.json* bun.lock* ./
+# Copiar manifesto de dependências e package-lock.json consistente
+COPY package.json package-lock.json ./
 
-# Instalar dependências
-RUN npm install
+# Instalação limpa e reprodutível de dependências em produção
+RUN npm ci
 
 # Copiar código-fonte da aplicação
 COPY . .
@@ -23,13 +23,13 @@ COPY . .
 # Compilar frontend React (Vite + PWA + Tailwind)
 RUN npm run build
 
-# Criar diretórios para volumes persistentes com permissões adequadas
+# Criar diretórios para volumes persistentes
 RUN mkdir -p /app/data /app/uploads/plants
 
 # Declarar volumes persistentes para SQLite e fotos das plantas
 VOLUME ["/app/data", "/app/uploads"]
 
-# Expor porta da aplicação
+# Expor porta interna da aplicação
 EXPOSE 3000
 
 # Variáveis padrão

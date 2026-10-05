@@ -1,21 +1,11 @@
 /**
- * Serviço de Barreira de Acesso Local do Novo Hiper
+ * Serviço de Autenticação do Novo Hiper
  * 
- * ATENÇÃO: Esta é uma barreira de acesso simples para a experiência lúdica infantil,
- * não devendo ser tratada como um sistema de autenticação de segurança avançada.
- * A validação é realizada localmente no navegador.
+ * A validação de credenciais é realizada exclusivamente no servidor Node.js.
+ * Nenhuma senha ou hash de senha é exposta no bundle do frontend.
  */
 
 export const AUTH_SESSION_KEY = 'novo_hiper_session_auth';
-
-/**
- * Credenciais iniciais padrão para acesso ao Novo Hiper.
- * Para alterar a credencial no código, basta atualizar os valores abaixo.
- */
-export const INITIAL_AUTH_CREDENTIALS = {
-  username: (import.meta.env.VITE_AUTH_USERNAME as string) || 'Bernardo',
-  password: (import.meta.env.VITE_AUTH_PASSWORD as string) || 'NovoHiper2026',
-};
 
 export interface AuthSession {
   user: string;
@@ -25,10 +15,11 @@ export interface AuthSession {
 export interface LoginResult {
   success: boolean;
   error?: string;
+  user?: string;
 }
 
 /**
- * Verifica se existe uma sessão ativa válida salva no localStorage.
+ * Verifica se existe uma sessão ativa válida salva localmente.
  */
 export function checkIsAuthenticated(): boolean {
   try {
@@ -56,9 +47,10 @@ export function getCurrentUser(): string {
 }
 
 /**
- * Valida o usuário e a senha fornecidos contra as credenciais configuradas.
+ * Valida o usuário e a senha fornecidos contra o backend Node.js.
+ * O hash seguro é verificado exclusivamente no servidor.
  */
-export function login(usernameInput: string, passwordInput: string): LoginResult {
+export async function login(usernameInput: string, passwordInput: string): Promise<LoginResult> {
   const trimmedUser = usernameInput.trim();
   const trimmedPassword = passwordInput.trim();
 
@@ -69,26 +61,42 @@ export function login(usernameInput: string, passwordInput: string): LoginResult
     };
   }
 
-  const isUserValid = trimmedUser.toLowerCase() === INITIAL_AUTH_CREDENTIALS.username.toLowerCase();
-  const isPasswordValid = trimmedPassword === INITIAL_AUTH_CREDENTIALS.password;
+  const apiBase = import.meta.env.VITE_API_URL || '/api';
 
-  if (isUserValid && isPasswordValid) {
-    try {
+  try {
+    const res = await fetch(`${apiBase}/auth/login`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        username: trimmedUser,
+        password: trimmedPassword,
+      }),
+    });
+
+    const data = await res.json().catch(() => ({}));
+
+    if (res.ok && data.success) {
       const session: AuthSession = {
-        user: INITIAL_AUTH_CREDENTIALS.username,
+        user: data.user || trimmedUser,
         loggedInAt: Date.now(),
       };
       localStorage.setItem(AUTH_SESSION_KEY, JSON.stringify(session));
-    } catch (err) {
-      console.error('Erro ao salvar sessão de login no localStorage:', err);
+      return { success: true, user: session.user };
     }
-    return { success: true };
-  }
 
-  return {
-    success: false,
-    error: 'Usuário ou senha incorretos. Verifique e tente novamente.',
-  };
+    return {
+      success: false,
+      error: data.error || 'Usuário ou senha incorretos. Verifique e tente novamente.',
+    };
+  } catch (err) {
+    console.error('Erro ao conectar com servidor de autenticação:', err);
+    return {
+      success: false,
+      error: 'Não foi possível conectar ao servidor para validar o acesso. Verifique sua conexão.',
+    };
+  }
 }
 
 /**

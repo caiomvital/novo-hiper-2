@@ -16,19 +16,25 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage(null);
     setIsSubmitting(true);
 
-    const result = login(username, password);
+    try {
+      const result = await login(username, password);
 
-    if (result.success) {
-      sounds.playBellRing();
-      onLoginSuccess();
-    } else {
+      if (result.success) {
+        sounds.playBellRing();
+        onLoginSuccess();
+      } else {
+        sounds.playDeleteConfirm();
+        setErrorMessage(result.error || 'Usuário ou senha incorretos.');
+      }
+    } catch {
       sounds.playDeleteConfirm();
-      setErrorMessage(result.error || 'Usuário ou senha incorretos.');
+      setErrorMessage('Erro de comunicação com o servidor.');
+    } finally {
       setIsSubmitting(false);
     }
   };
