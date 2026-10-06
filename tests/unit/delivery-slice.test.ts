@@ -4,7 +4,7 @@ import { AdventureBridge, AdventureOrder, INITIAL_SNAPSHOT } from '../../src/pha
 import { DELIVERABLE_STATUSES, pickActiveOrder, toAdventureOrder } from '../../src/phaser-game/logic/activeOrder';
 import { formatBRL } from '../../src/phaser-game/logic/format';
 import { isWithinRadius } from '../../src/phaser-game/logic/proximity';
-import { CUSTOMER_SPOT, WORLD } from '../../src/phaser-game/config/worldConfig';
+import { CUSTOMER_SPOT, ENTRANCE_ZONE, WORLD } from '../../src/phaser-game/config/worldConfig';
 
 const order = (over: Partial<CustomerOrder>): CustomerOrder => ({
   id: 'o1', orderNumber: 101, customerId: 'c', customerName: 'Ana', customerAvatarUrl: '', customerRole: '', customerAddress: '',
@@ -60,7 +60,7 @@ describe('proximidade', () => {
     expect(CUSTOMER_SPOT.x).toBeLessThan(WORLD.width);
     expect(CUSTOMER_SPOT.y).toBeLessThan(WORLD.height);
     expect(isWithinRadius(WORLD.defaultSpawn, CUSTOMER_SPOT, CUSTOMER_SPOT.interactRadius)).toBe(false);
-    expect(isWithinRadius({ x: 1300, y: 900 }, CUSTOMER_SPOT, CUSTOMER_SPOT.interactRadius)).toBe(false);
+    expect(isWithinRadius(ENTRANCE_ZONE, CUSTOMER_SPOT, CUSTOMER_SPOT.interactRadius)).toBe(false);
   });
 });
 

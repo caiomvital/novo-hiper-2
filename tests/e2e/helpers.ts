@@ -1,5 +1,6 @@
 import { expect, Page } from '@playwright/test';
 import { PLATFORM, PLATFORM_GOAL, getGaps } from '../../src/phaser-game/config/platformConfig';
+import { ROUTE_TO_ENTRANCE } from './routes';
 import type { AdventureDiagnostics } from '../../src/phaser-game/debug/diagnostics';
 
 export const USERNAME = 'Bernardo';
@@ -170,9 +171,17 @@ export async function teleport(page: Page, x: number, y: number) {
   await page.evaluate(([px, py]) => window.__NH_ADVENTURE__!.teleportPlayer(px, py), [x, y]);
 }
 
+/** Anda por uma sequência de waypoints (cada trecho em linha reta); para se a cena mudar. */
+export async function walkRoute(page: Page, points: Array<{ x: number; y: number }>, tolerance = 12) {
+  for (const p of points) {
+    await walkTo(page, p.x, p.y, tolerance);
+    if ((await state(page)).scene !== 'world') return;
+  }
+}
+
 export async function enterPlatform(page: Page) {
-  // vai até a zona de entrada (1300, 900)
-  await walkTo(page, 1300, 900, 10);
+  // do spawn até a zona de entrada, pelas ruas (o bairro tem prédios no caminho)
+  await walkRoute(page, ROUTE_TO_ENTRANCE, 10);
   await waitForScene(page, 'platform');
 }
 

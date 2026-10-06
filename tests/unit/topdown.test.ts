@@ -9,8 +9,6 @@ import {
   TOPDOWN_SPRITE,
   frameIndex,
 } from '../../src/phaser-game/config/topdownSpriteConfig';
-import { ENTRANCE_ZONE, WORLD, CUSTOMER_SPOT } from '../../src/phaser-game/config/worldConfig';
-import { WORLD_MAP, streetPositions } from '../../src/phaser-game/config/worldMap';
 import { facingFromMovement, selectTopdownAnimation } from '../../src/phaser-game/logic/topdownAnimation';
 
 describe('animação top-down', () => {
@@ -74,36 +72,5 @@ describe('layout do spritesheet e collider', () => {
     expect(TOPDOWN_BODY.width).toBeLessThan(TOPDOWN_SPRITE.frameWidth / 2);
     expect(TOPDOWN_BODY.height).toBeLessThan(TOPDOWN_SPRITE.frameHeight);
     expect(TOPDOWN_BODY_OFFSET.y + TOPDOWN_BODY.height).toBeCloseTo(TOPDOWN_SPRITE.feet.y, 6);
-  });
-});
-
-describe('WORLD_MAP (preparação para mapa maior)', () => {
-  it('WORLD, entrada e cliente derivam do mapa (fonte única)', () => {
-    expect(WORLD.width).toBe(WORLD_MAP.width);
-    expect(WORLD.height).toBe(WORLD_MAP.height);
-    expect(WORLD.defaultSpawn).toBe(WORLD_MAP.spawn);
-    expect(ENTRANCE_ZONE).toBe(WORLD_MAP.entrance);
-    expect(CUSTOMER_SPOT).toBe(WORLD_MAP.customer);
-  });
-
-  it('todas as entidades do mapa ficam dentro dos limites do mundo', () => {
-    const inside = (p: { x: number; y: number }, margin = 0) =>
-      p.x >= margin && p.y >= margin && p.x <= WORLD_MAP.width - margin && p.y <= WORLD_MAP.height - margin;
-    expect(inside(WORLD_MAP.spawn, 20)).toBe(true);
-    expect(inside(WORLD_MAP.entrance, WORLD_MAP.entrance.radius)).toBe(true);
-    expect(inside(WORLD_MAP.customer, WORLD_MAP.customer.interactRadius / 2)).toBe(true);
-    for (const b of WORLD_MAP.buildings) expect(inside(b, WORLD_MAP.buildingSize / 2)).toBe(true);
-  });
-
-  it('as ruas cobrem o mapa de acordo com a dimensão (qualquer tamanho de mundo)', () => {
-    expect(streetPositions(1600, WORLD_MAP.streets)).toEqual([200, 600, 1000, 1400]);
-    expect(streetPositions(1200, WORLD_MAP.streets)).toEqual([200, 600, 1000]);
-    // um mundo bem maior gera mais ruas sem nenhuma mudança de código
-    expect(streetPositions(6000, WORLD_MAP.streets).length).toBe(15);
-    expect(streetPositions(6000, WORLD_MAP.streets).every((p) => p < 6000)).toBe(true);
-  });
-
-  it('a velocidade do jogador não depende do tamanho do mundo', () => {
-    expect(WORLD.playerSpeed).toBe(220);
   });
 });

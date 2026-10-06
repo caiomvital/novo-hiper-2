@@ -14,8 +14,10 @@ import {
   teleportToGoal,
   waitForScene,
   walkRightUntilFall,
+  walkRoute,
   walkTo,
 } from './helpers';
+import { ROUTE_TO_ENTRANCE_NORTH_SIDE } from './routes';
 
 test.beforeEach(async ({ page }) => {
   await login(page);
@@ -92,7 +94,7 @@ test('Espaço segurado ao chegar NÃO pula a confirmação "Destino encontrado!"
 
 test('entrando pela borda de cima, o retorno não dispara a plataforma de novo', async ({ page }) => {
   // bug original: retorno = y + 70 caía dentro do raio quando se entrava por cima
-  await walkTo(page, ENTRANCE_ZONE.x, ENTRANCE_ZONE.y - ENTRANCE_ZONE.radius - 30, 8);
+  await walkRoute(page, ROUTE_TO_ENTRANCE_NORTH_SIDE, 8); // dentro do lote, ao norte da zona
   await page.keyboard.down('ArrowDown'); // desce até tocar a borda de cima da zona
   await page.waitForFunction(() => window.__NH_ADVENTURE__?.getState().scene === 'platform');
   await page.keyboard.up('ArrowDown');

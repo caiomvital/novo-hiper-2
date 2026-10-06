@@ -2,7 +2,9 @@ import Phaser from 'phaser';
 import { SCENE_KEYS } from '../sceneKeys';
 import { InputState } from '../input/InputState';
 import { WORLD, ENTRANCE_ZONE, CUSTOMER_SPOT } from '../config/worldConfig';
-import { WORLD_MAP, streetPositions } from '../config/worldMap';
+import { WORLD_MAP, PLAYABLE_RECT } from '../config/worldMap';
+import { drawWorld } from '../world/drawWorld';
+import { rectCenter } from '../logic/worldGeometry';
 import {
   Facing,
   TOPDOWN_BODY,
@@ -15,6 +17,7 @@ import {
 import { createBernardoTopdownAnimations, preloadBernardoTopdownSprites } from '../bernardoTopdownSprites';
 import { facingFromMovement, selectTopdownAnimation } from '../logic/topdownAnimation';
 import { isWithinRadius } from '../logic/proximity';
+import { destinationIndicator, formatMeters } from '../logic/destination';
 import { formatBRL } from '../logic/format';
 import type { AdventureBridge, AdventureSnapshot } from '../bridge/adventureBridge';
 import { REARM_DISTANCE, computeReturnPoint, distanceToEntrance, isInsideEntrance } from '../logic/worldEntrance';
@@ -29,6 +32,7 @@ export class WorldScene extends Phaser.Scene {
   private instanceId = 0;
   private player!: Phaser.Physics.Arcade.Sprite;
   private inputState!: InputState;
+  private solids!: Phaser.Physics.Arcade.StaticGroup;
   private facing: Facing = 'down';
   private currentAnim = '';
   private playerShadow!: Phaser.GameObjects.Ellipse;
@@ -45,6 +49,13 @@ export class WorldScene extends Phaser.Scene {
   private customerMarker!: Phaser.GameObjects.Text;
   private deliveryHud!: Phaser.GameObjects.Text;
   private promptText!: Phaser.GameObjects.Text;
+  private indicatorBg!: Phaser.GameObjects.Rectangle;
+  private indicatorTitle!: Phaser.GameObjects.Text;
+  private indicatorName!: Phaser.GameObjects.Text;
+  private indicatorText!: Phaser.GameObjects.Text;
+  private indicatorArrow!: Phaser.GameObjects.Triangle;
+  private deliveryRing!: Phaser.GameObjects.Arc;
+  private indicatorIndicator: { meters: number; near: boolean; angle: number } | null = null;
   private nearCustomer = false;
   private feedbackPlayedFor: string | null = null;
 
@@ -69,26 +80,21 @@ export class WorldScene extends Phaser.Scene {
     this.registry.set('activeScene', 'world');
 
     this.physics.world.gravity.y = 0;
-    // Limites da física e da câmera, fundo, ruas e prédios vêm de WORLD_MAP (o viewport é independente do mundo)
-    this.physics.world.setBounds(0, 0, WORLD_MAP.width, WORLD_MAP.height);
+    // Limites da câmera = mundo inteiro; limites da física = área jogável (a margem externa é só decoração).
+    // Tudo (ruas, quarteirões, casas, praça, colisões) vem dos dados de WORLD_MAP.
+    this.physics.world.setBounds(PLAYABLE_RECT.x, PLAYABLE_RECT.y, PLAYABLE_RECT.w, PLAYABLE_RECT.h);
     this.cameras.main.setBounds(0, 0, WORLD_MAP.width, WORLD_MAP.height);
     this.cameras.main.fadeIn(200, 0, 0, 0);
+    drawWorld(this, WORLD_MAP);
 
-    // Chão provisório do bairro (placeholder — sem assets definitivos)
-    this.add.rectangle(WORLD_MAP.width / 2, WORLD_MAP.height / 2, WORLD_MAP.width, WORLD_MAP.height, WORLD_MAP.groundColor);
-
-    // Ruas provisórias, só pra dar noção de bairro
-    for (const x of streetPositions(WORLD_MAP.width, WORLD_MAP.streets)) {
-      this.add.rectangle(x, WORLD_MAP.height / 2, WORLD_MAP.streets.width, WORLD_MAP.height, WORLD_MAP.streetColor);
+    // Colisões: um retângulo estático por elemento sólido (invisíveis; o desenho já está no mapa)
+    this.solids = this.physics.add.staticGroup();
+    for (const r of WORLD_MAP.solids) {
+      const c = rectCenter(r);
+      const body = this.add.rectangle(c.x, c.y, r.w, r.h).setVisible(false);
+      this.physics.add.existing(body, true);
+      this.solids.add(body);
     }
-    for (const y of streetPositions(WORLD_MAP.height, WORLD_MAP.streets)) {
-      this.add.rectangle(WORLD_MAP.width / 2, y, WORLD_MAP.width, WORLD_MAP.streets.width, WORLD_MAP.streetColor);
-    }
-
-    // Blocos decorativos representando futuras casas/estabelecimentos (sem colisão nesta etapa)
-    WORLD_MAP.buildings.forEach((b) => {
-      this.add.rectangle(b.x, b.y, WORLD_MAP.buildingSize, WORLD_MAP.buildingSize, b.color).setStrokeStyle(4, 0x1c1917);
-    });
 
     // Zona de entrada da área especial (trecho de plataforma)
     this.entranceVisual = this.add.circle(ENTRANCE_ZONE.x, ENTRANCE_ZONE.y, ENTRANCE_ZONE.radius, 0xf97316, 0.85);
@@ -116,6 +122,7 @@ export class WorldScene extends Phaser.Scene {
     this.player = this.physics.add.sprite(spawn.x, spawn.y, TOPDOWN_SPRITE.textureKey, frameIndex('down', 0));
     this.player.setOrigin(TOPDOWN_ORIGIN.x, TOPDOWN_ORIGIN.y).setDepth(1);
     this.player.setCollideWorldBounds(true);
+    this.physics.add.collider(this.player, this.solids);
     (this.player.body as Phaser.Physics.Arcade.Body)
       .setSize(TOPDOWN_BODY.width, TOPDOWN_BODY.height, false)
       .setOffset(TOPDOWN_BODY_OFFSET.x, TOPDOWN_BODY_OFFSET.y);
@@ -160,6 +167,38 @@ export class WorldScene extends Phaser.Scene {
       .text(16, 50, '', { fontSize: '13px', color: '#fafaf9', backgroundColor: '#1c1917cc', padding: { x: 8, y: 5 } })
       .setScrollFactor(0)
       .setVisible(false);
+    // Indicador de destino (HUD): direção real + distância; sem rota nem minimapa
+    const IX = 16;
+    const IY = 84;
+    this.indicatorBg = this.add.rectangle(IX, IY, 196, 76, 0x1c1917, 0.8).setOrigin(0, 0).setScrollFactor(0).setDepth(20).setVisible(false);
+    this.indicatorTitle = this.add
+      .text(IX + 10, IY + 6, 'ENTREGA', { fontSize: '11px', fontStyle: 'bold', color: '#fbbf24' })
+      .setScrollFactor(0)
+      .setDepth(21)
+      .setVisible(false);
+    this.indicatorName = this.add
+      .text(IX + 10, IY + 21, '', { fontSize: '14px', fontStyle: 'bold', color: '#fafaf9' })
+      .setScrollFactor(0)
+      .setDepth(21)
+      .setVisible(false);
+    this.indicatorArrow = this.add
+      .triangle(IX + 28, IY + 54, 0, 0, 22, 9, 0, 18, 0xfbbf24)
+      .setScrollFactor(0)
+      .setDepth(21)
+      .setVisible(false);
+    this.indicatorText = this.add
+      .text(IX + 52, IY + 45, '', { fontSize: '16px', fontStyle: 'bold', color: '#fde68a' })
+      .setScrollFactor(0)
+      .setDepth(21)
+      .setVisible(false);
+    // Marca no chão do ponto de entrega (na porta da casa)
+    this.deliveryRing = this.add
+      .circle(CUSTOMER_SPOT.x, CUSTOMER_SPOT.y + 6, 30, 0xfbbf24, 0.18)
+      .setStrokeStyle(4, 0xfbbf24, 0.9)
+      .setDepth(0.4)
+      .setVisible(false);
+    this.tweens.add({ targets: this.deliveryRing, scale: 1.2, yoyo: true, repeat: -1, duration: 650 });
+
     this.promptText = this.add
       .text(this.cameras.main.width / 2, this.cameras.main.height - 150, '', {
         fontSize: '15px',
@@ -209,6 +248,7 @@ export class WorldScene extends Phaser.Scene {
     this.customerSprite.setVisible(Boolean(order));
     this.customerLabel.setVisible(Boolean(order)).setText(order ? order.customerName : '');
     this.customerMarker.setVisible(Boolean(order) && snap.phase === 'idle');
+    this.deliveryRing.setVisible(Boolean(order) && snap.phase === 'idle');
 
     let text = '';
     let color = '#fafaf9';
@@ -257,6 +297,22 @@ export class WorldScene extends Phaser.Scene {
     if (this.nearCustomer && order) {
       this.promptText.setText(`E / ✋  Entregar ${order.plantName} para ${order.customerName}`);
       this.promptText.setPosition(this.cameras.main.width / 2, this.cameras.main.height - 150);
+    }
+    // Indicador de destino: só com entrega ativa e ocioso
+    const showIndicator = canDeliver && order !== null;
+    this.indicatorBg.setVisible(showIndicator);
+    this.indicatorTitle.setVisible(showIndicator);
+    this.indicatorName.setVisible(showIndicator);
+    if (showIndicator && order) {
+      const ind = destinationIndicator(this.player, CUSTOMER_SPOT);
+      this.indicatorName.setText(order.customerName);
+      this.indicatorArrow.setVisible(!ind.near).setRotation(ind.angle);
+      this.indicatorText.setVisible(true).setText(ind.near ? 'Destino próximo' : formatMeters(ind.meters));
+      this.indicatorIndicator = { meters: ind.meters, near: ind.near, angle: ind.angle };
+    } else {
+      this.indicatorArrow.setVisible(false);
+      this.indicatorText.setVisible(false);
+      this.indicatorIndicator = null;
     }
     const pressed = this.inputState.consumePress('interact');
     if (pressed && this.nearCustomer && order && this.bridge) {
@@ -315,6 +371,9 @@ export class WorldScene extends Phaser.Scene {
         near: this.nearCustomer,
         promptVisible: this.promptText?.visible ?? false,
         hud: this.deliveryHud?.text ?? '',
+        indicator: this.indicatorIndicator
+          ? { ...this.indicatorIndicator, text: this.indicatorText.text, arrowVisible: this.indicatorArrow.visible }
+          : null,
         lastReward: this.snap?.lastDelivery?.reward ?? null,
       },
     };

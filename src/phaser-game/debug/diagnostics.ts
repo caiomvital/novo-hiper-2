@@ -42,6 +42,7 @@ export interface AdventureDiagnostics {
     near: boolean;
     promptVisible: boolean;
     hud: string;
+    indicator: { meters: number; near: boolean; angle: number; text: string; arrowVisible: boolean } | null;
     lastReward: number | null;
   } | null;
 }

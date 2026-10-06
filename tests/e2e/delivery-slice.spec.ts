@@ -2,7 +2,8 @@ import { expect, Page, test } from '@playwright/test';
 import { CUSTOMER_SPOT } from '../../src/phaser-game/config/worldConfig';
 import { DELIVERY_ERROR_MS, DELIVERY_FEEDBACK_MS } from '../../src/phaser-game/bridge/adventureBridge';
 import { formatBRL } from '../../src/phaser-game/logic/format';
-import { login, openAdventure, state, walkTo } from './helpers';
+import { login, openAdventure, state, teleport, walkRoute } from './helpers';
+import { ROUTE_TO_CUSTOMER } from './routes';
 
 let seq = 0;
 const uid = (p: string) => `${p}_e2e_${Date.now()}_${++seq}`;
@@ -45,8 +46,10 @@ const delivery = async (page: Page) => (await state(page)).delivery!;
 const waitDelivery = (page: Page, pred: string, timeout = 30_000) =>
   page.waitForFunction(`(() => { const d = window.__NH_ADVENTURE__?.getState().delivery; return Boolean(d && (${pred})); })()`, null, { timeout });
 
-async function goToCustomer(page: Page) {
-  await walkTo(page, CUSTOMER_SPOT.x, CUSTOMER_SPOT.y + 40, 10);
+/** `walk=true` percorre as ruas de verdade; senão teletransporta para junto do destino (quando andar não é o que se testa). */
+async function goToCustomer(page: Page, walk = false) {
+  if (walk) await walkRoute(page, ROUTE_TO_CUSTOMER, 12);
+  else await teleport(page, CUSTOMER_SPOT.x, CUSTOMER_SPOT.y + 20);
   await waitDelivery(page, 'd.near');
 }
 
@@ -85,7 +88,7 @@ test.describe('vertical slice: pedido real → mapa → cliente → entrega → 
     await page.waitForTimeout(600);
     expect(calls.start).toBe(0);
 
-    await goToCustomer(page);
+    await goToCustomer(page, true); // percorre as ruas até a casa do cliente
     expect((await delivery(page)).promptVisible).toBe(true);
 
     // várias teclas E seguidas: uma única intenção chega ao backend
@@ -150,7 +153,8 @@ test.describe('vertical slice: pedido real → mapa → cliente → entrega → 
     expect(d.customerVisible).toBe(false);
     expect(d.hud).toBe('Sem entregas no momento');
 
-    await walkTo(page, CUSTOMER_SPOT.x, CUSTOMER_SPOT.y + 40, 10);
+    await teleport(page, CUSTOMER_SPOT.x, CUSTOMER_SPOT.y + 40);
+    await page.waitForTimeout(500);
     expect((await delivery(page)).promptVisible).toBe(false);
     await page.keyboard.press('KeyE');
     await page.waitForTimeout(800);
