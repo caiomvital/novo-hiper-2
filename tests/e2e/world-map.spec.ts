@@ -2,10 +2,14 @@ import { expect, test } from '@playwright/test';
 import { CUSTOMER_SPOT } from '../../src/phaser-game/config/worldConfig';
 import { PIXELS_PER_METER, PLAYABLE_RECT, WORLD_MAP } from '../../src/phaser-game/config/worldMap';
 import { NEAR_DESTINATION_PX } from '../../src/phaser-game/logic/destination';
+import { closeSuiteOrders, suiteId } from './suiteData';
 import { holdKeys, login, openAdventure, state, teleport } from './helpers';
 
 const waitDelivery = (page: import('@playwright/test').Page, pred: string, timeout = 30_000) =>
   page.waitForFunction(`(() => { const d = window.__NH_ADVENTURE__?.getState().delivery; return Boolean(d && (${pred})); })()`, null, { timeout });
+
+// não deixa pedido aberto da suíte no DEV (o teste manual não deve vê-lo); só toca em ids da suíte
+test.afterEach(({ page }) => closeSuiteOrders(page).catch(() => undefined));
 
 test.describe('o bairro (3200x2400) em viewport pequeno (celular)', () => {
   test.use({ viewport: { width: 360, height: 640 } });
@@ -88,8 +92,9 @@ test.describe('o bairro (3200x2400) em viewport pequeno (celular)', () => {
 test.describe('indicador de destino (direção e distância)', () => {
   test('aponta para o destino real e mostra a distância em metros; perto muda para "Destino próximo"', async ({ page }) => {
     await login(page);
-    const plant = await (await page.request.post('/api/plants', { data: { id: `plant_ind_${Date.now()}`, name: 'Planta Ind', price: 10, stock_quantity: 3, image_path: '/a.jpg' } })).json();
-    const order = await (await page.request.post('/api/orders', { data: { id: `ord_ind_${Date.now()}`, customer_name: 'Seu João IND', destination_id: 'd', items: [{ plant_id: plant.id, quantity: 1 }] } })).json();
+    await closeSuiteOrders(page);
+    const plant = await (await page.request.post('/api/plants', { data: { id: suiteId('plant_ind'), name: 'Planta Ind', price: 10, stock_quantity: 3, image_path: '/a.jpg' } })).json();
+    const order = await (await page.request.post('/api/orders', { data: { id: suiteId('ord_ind'), customer_name: 'Seu João IND', destination_id: 'd', items: [{ plant_id: plant.id, quantity: 1 }] } })).json();
     // abre sem outros pedidos abertos mais antigos competindo: o teste confere qual é o ativo
     await openAdventure(page);
     await page.waitForFunction(`window.__NH_ADVENTURE__?.getState().delivery?.activeOrderId`);
@@ -135,11 +140,7 @@ test.describe('indicador de destino (direção e distância)', () => {
 
   test('sem entrega ativa o indicador não aparece', async ({ page }) => {
     await login(page);
-    const open = (await (await page.request.get('/api/orders')).json()).filter((o: any) => o.status !== 'entregue');
-    for (const o of open) {
-      const d = await page.request.post('/api/deliveries/start', { data: { order_id: o.id } });
-      if (d.ok()) await page.request.post(`/api/deliveries/${(await d.json()).id}/finish`);
-    }
+    await closeSuiteOrders(page);
     await openAdventure(page);
     await waitDelivery(page, 'd.loaded');
     const d = (await state(page)).delivery!;

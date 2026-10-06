@@ -4,9 +4,8 @@ import { DELIVERY_ERROR_MS, DELIVERY_FEEDBACK_MS } from '../../src/phaser-game/b
 import { formatBRL } from '../../src/phaser-game/logic/format';
 import { login, openAdventure, state, teleport, walkRoute } from './helpers';
 import { ROUTE_TO_CUSTOMER } from './routes';
+import { closeSuiteOrders, suiteId } from './suiteData';
 
-let seq = 0;
-const uid = (p: string) => `${p}_e2e_${Date.now()}_${++seq}`;
 
 async function api(page: Page, method: 'get' | 'post' | 'put', url: string, data?: unknown) {
   const res = await page.request[method](url, data === undefined ? undefined : { data });
@@ -14,33 +13,19 @@ async function api(page: Page, method: 'get' | 'post' | 'put', url: string, data
   return { status: res.status(), body: text ? JSON.parse(text) : null };
 }
 const createPlant = async (page: Page, over: Record<string, unknown> = {}) => {
-  const id = uid('plant');
+  const id = suiteId('plant');
   const r = await api(page, 'post', '/api/plants', { id, name: 'Planta E2E', price: 12.5, stock_quantity: 5, image_path: '/uploads/plants/e2e.jpg', ...over });
   expect(r.status).toBe(201);
   return r.body;
 };
 const createOrder = async (page: Page, plantId: string, quantity = 1, customer = 'Cliente E2E') => {
-  const r = await api(page, 'post', '/api/orders', { id: uid('ord'), customer_name: customer, destination_id: 'dest_e2e', items: [{ plant_id: plantId, quantity }] });
+  const r = await api(page, 'post', '/api/orders', { id: suiteId('ord'), customer_name: customer, destination_id: 'dest_e2e', items: [{ plant_id: plantId, quantity }] });
   expect(r.status).toBe(201);
   return r.body;
 };
 const orderStatus = async (page: Page, id: string) => (await api(page, 'get', `/api/orders/${id}`)).body.status as string;
 const stock = async (page: Page, id: string) => (await api(page, 'get', `/api/plants/${id}`)).body.stock_quantity as number;
 const cash = async (page: Page) => (await api(page, 'get', '/api/cash')).body as { balance: number; transactions: any[] };
-
-/** Fecha pedidos abertos que sobraram de execuções anteriores (backend de DEV), para o teste controlar qual é o ativo. */
-async function closeOpenOrders(page: Page, except: string[] = []) {
-  const orders = (await api(page, 'get', '/api/orders')).body as any[];
-  for (const o of orders) {
-    if (o.status === 'entregue' || except.includes(o.id)) continue;
-    for (const it of o.items ?? []) {
-      const p = (await api(page, 'get', `/api/plants/${it.plant_id}`)).body;
-      if (p && p.stock_quantity < it.quantity) await api(page, 'put', `/api/plants/${it.plant_id}`, { name: p.name, price: p.price, stock_quantity: 100 });
-    }
-    const d = await page.request.post('/api/deliveries/start', { data: { order_id: o.id } });
-    if (d.ok()) await page.request.post(`/api/deliveries/${(await d.json()).id}/finish`);
-  }
-}
 
 const delivery = async (page: Page) => (await state(page)).delivery!;
 const waitDelivery = (page: Page, pred: string, timeout = 30_000) =>
@@ -63,10 +48,13 @@ function countRequests(page: Page) {
   return calls;
 }
 
+// não deixa pedido aberto da suíte no DEV (o teste manual não deve vê-lo); só toca em ids da suíte
+test.afterEach(({ page }) => closeSuiteOrders(page).catch(() => undefined));
+
 test.describe('vertical slice: pedido real → mapa → cliente → entrega → caixa', () => {
   test('fluxo completo: entrega uma vez (estoque e caixa exatamente 1×), feedback preservando o cliente e só depois o próximo pedido', async ({ page }) => {
     await login(page);
-    await closeOpenOrders(page);
+    await closeSuiteOrders(page);
     const plant = await createPlant(page, { name: 'Samambaia E2E', price: 12.5, stock_quantity: 5 });
     const first = await createOrder(page, plant.id, 1, 'Dona Maria E2E');
     const second = await createOrder(page, plant.id, 1, 'Seu João E2E');
@@ -139,12 +127,12 @@ test.describe('vertical slice: pedido real → mapa → cliente → entrega → 
     expect((await state(page)).player!.x).toBeLessThan(p0.x - 20);
 
     // limpeza: fecha o 2º pedido pelo fluxo oficial
-    await closeOpenOrders(page);
+    await closeSuiteOrders(page);
   });
 
   test('sem pedido ativo: mundo explorável, aviso discreto e nenhuma chamada de entrega', async ({ page }) => {
     await login(page);
-    await closeOpenOrders(page);
+    await closeSuiteOrders(page);
     const calls = countRequests(page);
     await openAdventure(page);
     await waitDelivery(page, 'd.loaded');
@@ -164,7 +152,7 @@ test.describe('vertical slice: pedido real → mapa → cliente → entrega → 
 
   test('erro do servidor (estoque insuficiente): mostra a mensagem, o pedido continua aberto e dá para tentar de novo', async ({ page }) => {
     await login(page);
-    await closeOpenOrders(page);
+    await closeSuiteOrders(page);
     const plant = await createPlant(page, { stock_quantity: 1, price: 10 });
     const order = await createOrder(page, plant.id, 2);
     const cashBefore = await cash(page);
@@ -198,7 +186,7 @@ test.describe('botão touch', () => {
 
   test('o botão "Interagir" entrega o pedido', async ({ page }) => {
     await login(page);
-    await closeOpenOrders(page);
+    await closeSuiteOrders(page);
     const plant = await createPlant(page, { price: 10, stock_quantity: 3 });
     const order = await createOrder(page, plant.id, 1);
     await openAdventure(page);

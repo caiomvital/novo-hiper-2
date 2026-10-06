@@ -1,9 +1,13 @@
 import { expect, test } from '@playwright/test';
+import { closeSuiteOrders, suiteId } from './suiteData';
 import { login, openAdventure, state, holdKeys } from './helpers';
 
 const sprite = async (page: import('@playwright/test').Page) => (await state(page)).sprite!;
 const waitAnim = (page: import('@playwright/test').Page, anim: string) =>
   page.waitForFunction((a) => window.__NH_ADVENTURE__?.getState().sprite?.anim === a, anim, { timeout: 20_000 });
+
+// não deixa pedido aberto da suíte no DEV (o teste manual não deve vê-lo); só toca em ids da suíte
+test.afterEach(({ page }) => closeSuiteOrders(page).catch(() => undefined));
 
 test.describe('Bernardo top-down no WorldScene', () => {
   test('anda nas 4 direções com a animação correspondente e volta ao idle da última direção', async ({ page }) => {
@@ -71,9 +75,10 @@ test.describe('Bernardo top-down no WorldScene', () => {
 test.describe('fullscreen no PC', () => {
   test('o botão põe o container inteiro em tela cheia sem recriar Game nem cena, sem mudar posição, mundo ou pedido', async ({ page }) => {
     await login(page);
+    await closeSuiteOrders(page);
     // pedido real aberto para provar que o pedido ativo não se perde
-    const plant = await (await page.request.post('/api/plants', { data: { id: `plant_fs_${Date.now()}`, name: 'Planta FS', price: 10, stock_quantity: 3, image_path: '/a.jpg' } })).json();
-    const order = await (await page.request.post('/api/orders', { data: { id: `ord_fs_${Date.now()}`, customer_name: 'Cliente FS', destination_id: 'd', items: [{ plant_id: plant.id, quantity: 1 }] } })).json();
+    const plant = await (await page.request.post('/api/plants', { data: { id: suiteId('plant_fs'), name: 'Planta FS', price: 10, stock_quantity: 3, image_path: '/a.jpg' } })).json();
+    const order = await (await page.request.post('/api/orders', { data: { id: suiteId('ord_fs'), customer_name: 'Cliente FS', destination_id: 'd', items: [{ plant_id: plant.id, quantity: 1 }] } })).json();
     await openAdventure(page);
     await page.waitForFunction(`window.__NH_ADVENTURE__?.getState().delivery?.activeOrderId`);
     const activeBefore = (await state(page)).delivery!.activeOrderId;

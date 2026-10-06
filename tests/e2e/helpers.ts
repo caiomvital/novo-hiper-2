@@ -1,4 +1,5 @@
 import { expect, Page } from '@playwright/test';
+import { isolateSuiteOrders } from './suiteData';
 import { PLATFORM, PLATFORM_GOAL, getGaps } from '../../src/phaser-game/config/platformConfig';
 import { ROUTE_TO_ENTRANCE } from './routes';
 import type { AdventureDiagnostics } from '../../src/phaser-game/debug/diagnostics';
@@ -9,6 +10,7 @@ export const USERNAME = 'Bernardo';
 export const PASSWORD = process.env.E2E_PASSWORD ?? 'dev-only-test-password-1';
 
 export async function login(page: Page) {
+  await isolateSuiteOrders(page); // a Aventura só enxerga pedidos criados pela suíte (nunca os manuais do DEV)
   await page.goto('/');
   await page.getByPlaceholder(/Nome do lojista/).fill(USERNAME);
   await page.getByPlaceholder('Digite a senha da loja').fill(PASSWORD);
