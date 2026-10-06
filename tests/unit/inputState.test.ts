@@ -80,4 +80,44 @@ describe('InputState (teclado + touch)', () => {
     key('keydown', 'ArrowUp');
     expect(input.snapshot.up).toBe(false);
   });
+
+  it('interact: KeyE mapeado; Enter NÃO é mapeado (preventDefault faria o Phaser ignorar o Enter)', () => {
+    const input = new InputState();
+    input.attachKeyboard();
+    key('keydown', 'KeyE');
+    expect(input.snapshot.interact).toBe(true);
+    key('keyup', 'KeyE');
+    expect(input.snapshot.interact).toBe(false);
+    const enter = new KeyboardEvent('keydown', { code: 'Enter', cancelable: true });
+    window.dispatchEvent(enter);
+    expect(enter.defaultPrevented).toBe(false);
+    input.detachKeyboard();
+  });
+
+  it('consumePress: o aperto fica travado até ser consumido (toque rápido não se perde entre quadros)', () => {
+    const input = new InputState();
+    input.attachKeyboard();
+    key('keydown', 'KeyE');
+    key('keyup', 'KeyE'); // soltou antes de o jogo olhar
+    expect(input.snapshot.interact).toBe(false);
+    expect(input.consumePress('interact')).toBe(true);
+    expect(input.consumePress('interact')).toBe(false); // consumido
+    input.detachKeyboard();
+  });
+
+  it('consumePress: tecla segurada (repeat) conta UMA vez; toque também trava', () => {
+    const input = new InputState();
+    input.attachKeyboard();
+    window.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyE', cancelable: true }));
+    expect(input.consumePress('interact')).toBe(true);
+    window.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyE', repeat: true, cancelable: true }));
+    window.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyE', repeat: true, cancelable: true }));
+    expect(input.consumePress('interact')).toBe(false);
+    key('keyup', 'KeyE');
+    input.setTouch('interact', true);
+    input.setTouch('interact', false);
+    expect(input.consumePress('interact')).toBe(true);
+    input.detachKeyboard();
+    expect(input.consumePress('interact')).toBe(false);
+  });
 });

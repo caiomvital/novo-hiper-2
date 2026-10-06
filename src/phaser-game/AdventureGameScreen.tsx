@@ -5,16 +5,22 @@ import { createGameWithCleanup } from './phaserGlobals';
 import { InputState } from './input/InputState';
 import { installDiagnostics } from './debug/diagnostics';
 import { TouchControls } from './ui/TouchControls';
+import { AdventureBridge } from './bridge/adventureBridge';
+import { useDeliveryFlow } from './useDeliveryFlow';
 
 interface AdventureGameScreenProps {
   onExit: () => void;
+  /** Chamado depois de uma entrega concluída, para o App recarregar pedidos, estoque e caixa. */
+  onDataChanged?: () => void | Promise<void>;
 }
 
 type SceneMode = 'world' | 'platform';
 
-export const AdventureGameScreen: React.FC<AdventureGameScreenProps> = ({ onExit }) => {
+export const AdventureGameScreen: React.FC<AdventureGameScreenProps> = ({ onExit, onDataChanged }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const inputStateRef = useRef<InputState>(new InputState());
+  const bridgeRef = useRef<AdventureBridge>(new AdventureBridge());
+  useDeliveryFlow(bridgeRef.current, onDataChanged);
   const [activeMode, setActiveMode] = useState<SceneMode>('world');
   const [isTouchDevice] = useState(
     () => typeof window !== 'undefined' && (navigator.maxTouchPoints > 0 || 'ontouchstart' in window)
@@ -31,6 +37,7 @@ export const AdventureGameScreen: React.FC<AdventureGameScreenProps> = ({ onExit
 
     const game = createGameWithCleanup(createGameConfig(container));
     game.registry.set('inputState', inputState);
+    game.registry.set('bridge', bridgeRef.current);
     const removeDiagnostics = installDiagnostics(game, inputState, container);
 
     const handleActiveSceneChange = (_parent: unknown, value: SceneMode) => {

@@ -1,5 +1,5 @@
 import React from 'react';
-import { ChevronUp, ChevronDown, ChevronLeft, ChevronRight, ArrowUp } from 'lucide-react';
+import { ChevronUp, ChevronDown, ChevronLeft, ChevronRight, ArrowUp, Hand } from 'lucide-react';
 import { InputAction, InputState } from '../input/InputState';
 
 interface TouchControlsProps {
@@ -58,6 +58,19 @@ export const TouchControls: React.FC<TouchControlsProps> = ({ mode, inputState }
           </button>
           <button type="button" {...bind('right')} className={buttonClass} aria-label="Andar para a direita">
             <ChevronRight className="w-5 h-5" />
+          </button>
+        </div>
+      )}
+
+      {mode === 'world' && (
+        <div className="pointer-events-auto">
+          <button
+            type="button"
+            {...bind('interact')}
+            className="w-16 h-16 rounded-full bg-amber-600/85 active:bg-amber-500 text-white flex items-center justify-center border-2 border-amber-300/70 active:scale-95 transition-all touch-none select-none shadow-xl"
+            aria-label="Interagir"
+          >
+            <Hand className="w-6 h-6" />
           </button>
         </div>
       )}

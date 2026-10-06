@@ -19,6 +19,19 @@ export interface AdventureDiagnostics {
     body: { x: number; y: number; width: number; height: number };
   } | null;
   canvasCount: number;
+  /** Só na WorldScene: estado da entrega (vertical slice). */
+  delivery?: {
+    loaded: boolean;
+    phase: 'idle' | 'delivering' | 'done' | 'error';
+    activeOrderId: string | null;
+    customerName: string | null;
+    customerVisible: boolean;
+    customer: { x: number; y: number };
+    near: boolean;
+    promptVisible: boolean;
+    hud: string;
+    lastReward: number | null;
+  } | null;
 }
 
 export interface AdventureDebugApi {
@@ -67,6 +80,7 @@ export function installDiagnostics(game: Phaser.Game, _input: InputState, contai
         fallRespawns: base?.fallRespawns ?? 0,
         lastSafeGround: (base as { lastSafeGround?: { x: number; y: number } } | undefined)?.lastSafeGround ?? null,
         sprite: (base as Pick<AdventureDiagnostics, 'sprite'> | undefined)?.sprite ?? null,
+        delivery: (base as Pick<AdventureDiagnostics, 'delivery'> | undefined)?.delivery ?? null,
         canvasCount: container.querySelectorAll('canvas').length,
       };
     },

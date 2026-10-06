@@ -1,0 +1,212 @@
+import { expect, Page, test } from '@playwright/test';
+import { CUSTOMER_SPOT } from '../../src/phaser-game/config/worldConfig';
+import { DELIVERY_ERROR_MS, DELIVERY_FEEDBACK_MS } from '../../src/phaser-game/bridge/adventureBridge';
+import { formatBRL } from '../../src/phaser-game/logic/format';
+import { login, openAdventure, state, walkTo } from './helpers';
+
+let seq = 0;
+const uid = (p: string) => `${p}_e2e_${Date.now()}_${++seq}`;
+
+async function api(page: Page, method: 'get' | 'post' | 'put', url: string, data?: unknown) {
+  const res = await page.request[method](url, data === undefined ? undefined : { data });
+  const text = await res.text();
+  return { status: res.status(), body: text ? JSON.parse(text) : null };
+}
+const createPlant = async (page: Page, over: Record<string, unknown> = {}) => {
+  const id = uid('plant');
+  const r = await api(page, 'post', '/api/plants', { id, name: 'Planta E2E', price: 12.5, stock_quantity: 5, image_path: '/uploads/plants/e2e.jpg', ...over });
+  expect(r.status).toBe(201);
+  return r.body;
+};
+const createOrder = async (page: Page, plantId: string, quantity = 1, customer = 'Cliente E2E') => {
+  const r = await api(page, 'post', '/api/orders', { id: uid('ord'), customer_name: customer, destination_id: 'dest_e2e', items: [{ plant_id: plantId, quantity }] });
+  expect(r.status).toBe(201);
+  return r.body;
+};
+const orderStatus = async (page: Page, id: string) => (await api(page, 'get', `/api/orders/${id}`)).body.status as string;
+const stock = async (page: Page, id: string) => (await api(page, 'get', `/api/plants/${id}`)).body.stock_quantity as number;
+const cash = async (page: Page) => (await api(page, 'get', '/api/cash')).body as { balance: number; transactions: any[] };
+
+/** Fecha pedidos abertos que sobraram de execuções anteriores (backend de DEV), para o teste controlar qual é o ativo. */
+async function closeOpenOrders(page: Page, except: string[] = []) {
+  const orders = (await api(page, 'get', '/api/orders')).body as any[];
+  for (const o of orders) {
+    if (o.status === 'entregue' || except.includes(o.id)) continue;
+    for (const it of o.items ?? []) {
+      const p = (await api(page, 'get', `/api/plants/${it.plant_id}`)).body;
+      if (p && p.stock_quantity < it.quantity) await api(page, 'put', `/api/plants/${it.plant_id}`, { name: p.name, price: p.price, stock_quantity: 100 });
+    }
+    const d = await page.request.post('/api/deliveries/start', { data: { order_id: o.id } });
+    if (d.ok()) await page.request.post(`/api/deliveries/${(await d.json()).id}/finish`);
+  }
+}
+
+const delivery = async (page: Page) => (await state(page)).delivery!;
+const waitDelivery = (page: Page, pred: string, timeout = 30_000) =>
+  page.waitForFunction(`(() => { const d = window.__NH_ADVENTURE__?.getState().delivery; return Boolean(d && (${pred})); })()`, null, { timeout });
+
+async function goToCustomer(page: Page) {
+  await walkTo(page, CUSTOMER_SPOT.x, CUSTOMER_SPOT.y + 40, 10);
+  await waitDelivery(page, 'd.near');
+}
+
+function countRequests(page: Page) {
+  const calls = { start: 0, finish: 0 };
+  page.on('request', (r) => {
+    if (r.method() !== 'POST') return;
+    if (r.url().endsWith('/api/deliveries/start')) calls.start++;
+    if (/\/api\/deliveries\/[^/]+\/finish$/.test(r.url())) calls.finish++;
+  });
+  return calls;
+}
+
+test.describe('vertical slice: pedido real → mapa → cliente → entrega → caixa', () => {
+  test('fluxo completo: entrega uma vez (estoque e caixa exatamente 1×), feedback preservando o cliente e só depois o próximo pedido', async ({ page }) => {
+    await login(page);
+    await closeOpenOrders(page);
+    const plant = await createPlant(page, { name: 'Samambaia E2E', price: 12.5, stock_quantity: 5 });
+    const first = await createOrder(page, plant.id, 1, 'Dona Maria E2E');
+    const second = await createOrder(page, plant.id, 1, 'Seu João E2E');
+    expect([first.order_number, second.order_number].every(Number.isInteger)).toBe(true);
+
+    const cashBefore = await cash(page);
+    const calls = countRequests(page);
+    await openAdventure(page);
+
+    // pedido REAL do backend aparece no mundo (o mais antigo)
+    await waitDelivery(page, `d.loaded && d.activeOrderId === ${JSON.stringify(first.id)}`);
+    let d = await delivery(page);
+    expect(d.customerVisible).toBe(true);
+    expect(d.customerName).toBe('Dona Maria E2E');
+    expect(d.hud).toContain('Samambaia E2E');
+
+    // longe do cliente: E não entrega nada
+    await page.keyboard.press('KeyE');
+    await page.waitForTimeout(600);
+    expect(calls.start).toBe(0);
+
+    await goToCustomer(page);
+    expect((await delivery(page)).promptVisible).toBe(true);
+
+    // várias teclas E seguidas: uma única intenção chega ao backend
+    await page.keyboard.press('KeyE');
+    await page.keyboard.press('KeyE');
+    await page.keyboard.press('KeyE');
+    await waitDelivery(page, "d.phase === 'done'");
+
+    // FEEDBACK: o pedido/cliente recém-entregue continua na tela; recompensa e HUD mostram o valor
+    d = await delivery(page);
+    expect(d.activeOrderId).toBe(first.id);
+    expect(d.customerName).toBe('Dona Maria E2E');
+    expect(d.customerVisible).toBe(true);
+    expect(d.lastReward).toBe(12.5);
+    expect(d.hud).toContain(formatBRL(12.5));
+    expect(d.promptVisible).toBe(false);
+
+    // backend: estoque e caixa alterados EXATAMENTE uma vez
+    expect(await orderStatus(page, first.id)).toBe('entregue');
+    expect(await stock(page, plant.id)).toBe(4);
+    const cashAfter = await cash(page);
+    expect(cashAfter.balance).toBeCloseTo(cashBefore.balance + 12.5, 5);
+    expect(cashAfter.transactions.length).toBe(cashBefore.transactions.length + 1);
+    expect(cashAfter.transactions.filter((t) => t.order_id === first.id)).toHaveLength(1);
+    expect(calls).toEqual({ start: 1, finish: 1 });
+
+    // durante o feedback nenhuma nova entrega pode ser iniciada
+    await page.keyboard.press('KeyE');
+    await page.waitForTimeout(500);
+    expect(calls).toEqual({ start: 1, finish: 1 });
+
+    // só DEPOIS do feedback o próximo pedido é publicado
+    await waitDelivery(page, `d.phase === 'idle' && d.activeOrderId === ${JSON.stringify(second.id)}`, DELIVERY_FEEDBACK_MS + 15_000);
+    d = await delivery(page);
+    expect(d.customerName).toBe('Seu João E2E');
+    expect(d.lastReward).toBeNull();
+    expect(d.hud).toContain('Seu João E2E');
+
+    // o App recarregou estoque/caixa: o caixa do cabeçalho mostra o saldo novo
+    const header = (await page.locator('#btn-open-cash-mobile, #btn-open-cash-desktop').locator('visible=true').first().innerText()).replace(/\s/g, ' ');
+    expect(header).toContain(formatBRL(cashAfter.balance));
+
+    // e o mundo continua jogável: o jogador ainda anda
+    const p0 = (await state(page)).player!;
+    await page.keyboard.down('ArrowLeft');
+    await page.waitForTimeout(500);
+    await page.keyboard.up('ArrowLeft');
+    expect((await state(page)).player!.x).toBeLessThan(p0.x - 20);
+
+    // limpeza: fecha o 2º pedido pelo fluxo oficial
+    await closeOpenOrders(page);
+  });
+
+  test('sem pedido ativo: mundo explorável, aviso discreto e nenhuma chamada de entrega', async ({ page }) => {
+    await login(page);
+    await closeOpenOrders(page);
+    const calls = countRequests(page);
+    await openAdventure(page);
+    await waitDelivery(page, 'd.loaded');
+    const d = await delivery(page);
+    expect(d.activeOrderId).toBeNull();
+    expect(d.customerVisible).toBe(false);
+    expect(d.hud).toBe('Sem entregas no momento');
+
+    await walkTo(page, CUSTOMER_SPOT.x, CUSTOMER_SPOT.y + 40, 10);
+    expect((await delivery(page)).promptVisible).toBe(false);
+    await page.keyboard.press('KeyE');
+    await page.waitForTimeout(800);
+    expect(calls).toEqual({ start: 0, finish: 0 });
+    expect((await delivery(page)).phase).toBe('idle');
+  });
+
+  test('erro do servidor (estoque insuficiente): mostra a mensagem, o pedido continua aberto e dá para tentar de novo', async ({ page }) => {
+    await login(page);
+    await closeOpenOrders(page);
+    const plant = await createPlant(page, { stock_quantity: 1, price: 10 });
+    const order = await createOrder(page, plant.id, 2);
+    const cashBefore = await cash(page);
+    await openAdventure(page);
+    await waitDelivery(page, `d.activeOrderId === ${JSON.stringify(order.id)}`);
+    await goToCustomer(page);
+
+    await page.keyboard.press('KeyE');
+    await waitDelivery(page, "d.phase === 'error'");
+    expect((await delivery(page)).hud).toMatch(/Estoque insuficiente/i);
+    expect(await orderStatus(page, order.id)).not.toBe('entregue');
+    expect(await stock(page, plant.id)).toBe(1);
+    expect((await cash(page)).transactions.length).toBe(cashBefore.transactions.length);
+
+    // volta ao normal sozinho, com o MESMO pedido ativo
+    await waitDelivery(page, `d.phase === 'idle' && d.activeOrderId === ${JSON.stringify(order.id)}`, DELIVERY_ERROR_MS + 15_000);
+
+    // reabastece (catálogo) e tenta de novo: entrega normalmente, uma única vez
+    const p = (await api(page, 'get', `/api/plants/${plant.id}`)).body;
+    await api(page, 'put', `/api/plants/${plant.id}`, { name: p.name, price: p.price, stock_quantity: 5 });
+    await page.keyboard.press('KeyE');
+    await waitDelivery(page, "d.phase === 'done'");
+    expect(await orderStatus(page, order.id)).toBe('entregue');
+    expect(await stock(page, plant.id)).toBe(3);
+    expect((await cash(page)).transactions.filter((t) => t.order_id === order.id)).toHaveLength(1);
+  });
+});
+
+test.describe('botão touch', () => {
+  test.use({ hasTouch: true });
+
+  test('o botão "Interagir" entrega o pedido', async ({ page }) => {
+    await login(page);
+    await closeOpenOrders(page);
+    const plant = await createPlant(page, { price: 10, stock_quantity: 3 });
+    const order = await createOrder(page, plant.id, 1);
+    await openAdventure(page);
+    await waitDelivery(page, `d.activeOrderId === ${JSON.stringify(order.id)}`);
+    await goToCustomer(page);
+
+    const button = page.getByRole('button', { name: 'Interagir' });
+    await expect(button).toBeVisible();
+    await button.click();
+    await waitDelivery(page, "d.phase === 'done'");
+    expect(await orderStatus(page, order.id)).toBe('entregue');
+    expect(await stock(page, plant.id)).toBe(2);
+    expect((await cash(page)).transactions.filter((t) => t.order_id === order.id)).toHaveLength(1);
+  });
+});

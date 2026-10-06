@@ -131,6 +131,22 @@ export default function App() {
     };
   }, [authStatus]);
 
+  // Recarrega do backend (fonte de verdade) o que uma entrega feita na Aventura altera: pedidos, estoque, caixa e entregas
+  const reloadBusinessData = useCallback(async () => {
+    try {
+      const dbPlants = await api.getPlants();
+      if (dbPlants.length > 0) setPlants(dbPlants);
+      const dbOrders = await api.getOrders();
+      if (dbOrders.length > 0) setOrders(dbOrders);
+      const dbCash = await api.getCashRegister();
+      if (dbCash) setCashRegister(dbCash);
+      const dbDeliveries = await api.getDeliveries();
+      if (dbDeliveries.length > 0) setDeliveries(dbDeliveries);
+    } catch (err) {
+      console.warn('[Sync Backend]: Não foi possível recarregar os dados após a entrega:', err);
+    }
+  }, []);
+
   const handleManualMigration = async () => {
     setIsMigrating(true);
     const res = await runAutomaticLocalStorageMigration();
@@ -890,7 +906,7 @@ export default function App() {
               </div>
             }
           >
-            <AdventureGameScreen onExit={() => setActiveTab('catalogo')} />
+            <AdventureGameScreen onExit={() => setActiveTab('catalogo')} onDataChanged={reloadBusinessData} />
           </Suspense>
         )}
       </main>
