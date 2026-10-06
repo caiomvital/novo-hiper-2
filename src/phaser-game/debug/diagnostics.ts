@@ -19,6 +19,18 @@ export interface AdventureDiagnostics {
     body: { x: number; y: number; width: number; height: number };
   } | null;
   canvasCount: number;
+  /** Só na WorldScene: número da instância da cena (muda se a cena for recriada). */
+  instance?: number;
+  /** Só na WorldScene: câmera e limites do mundo. */
+  camera?: {
+    scrollX: number;
+    scrollY: number;
+    width: number;
+    height: number;
+    zoom: number;
+    bounds: { x: number; y: number; width: number; height: number } | null;
+    world: { width: number; height: number };
+  } | null;
   /** Só na WorldScene: estado da entrega (vertical slice). */
   delivery?: {
     loaded: boolean;
@@ -81,6 +93,8 @@ export function installDiagnostics(game: Phaser.Game, _input: InputState, contai
         lastSafeGround: (base as { lastSafeGround?: { x: number; y: number } } | undefined)?.lastSafeGround ?? null,
         sprite: (base as Pick<AdventureDiagnostics, 'sprite'> | undefined)?.sprite ?? null,
         delivery: (base as Pick<AdventureDiagnostics, 'delivery'> | undefined)?.delivery ?? null,
+        instance: (base as Pick<AdventureDiagnostics, 'instance'> | undefined)?.instance,
+        camera: (base as Pick<AdventureDiagnostics, 'camera'> | undefined)?.camera ?? null,
         canvasCount: container.querySelectorAll('canvas').length,
       };
     },

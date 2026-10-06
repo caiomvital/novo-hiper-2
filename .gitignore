@@ -48,3 +48,7 @@ screenshots/
 *.pid
 *.cid
 .claude/
+
+# Arte-fonte do Bernardo top-down (fora do git; o asset processado fica em public/)
+design-assets/bernardo-sprites/source/
+__pycache__/

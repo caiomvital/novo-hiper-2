@@ -2,22 +2,36 @@ import Phaser from 'phaser';
 import { SCENE_KEYS } from '../sceneKeys';
 import { InputState } from '../input/InputState';
 import { WORLD, ENTRANCE_ZONE, CUSTOMER_SPOT } from '../config/worldConfig';
+import { WORLD_MAP, streetPositions } from '../config/worldMap';
+import {
+  Facing,
+  TOPDOWN_BODY,
+  TOPDOWN_BODY_OFFSET,
+  TOPDOWN_ORIGIN,
+  TOPDOWN_SHADOW,
+  TOPDOWN_SPRITE,
+  frameIndex,
+} from '../config/topdownSpriteConfig';
+import { createBernardoTopdownAnimations, preloadBernardoTopdownSprites } from '../bernardoTopdownSprites';
+import { facingFromMovement, selectTopdownAnimation } from '../logic/topdownAnimation';
 import { isWithinRadius } from '../logic/proximity';
 import { formatBRL } from '../logic/format';
 import type { AdventureBridge, AdventureSnapshot } from '../bridge/adventureBridge';
 import { REARM_DISTANCE, computeReturnPoint, distanceToEntrance, isInsideEntrance } from '../logic/worldEntrance';
 import { consumeWorldReturnPoint, setWorldReturnPoint } from '../transition/transitionStore';
 
-const WORLD_WIDTH = WORLD.width;
-const WORLD_HEIGHT = WORLD.height;
 const PLAYER_SPEED = WORLD.playerSpeed;
-const DEFAULT_SPAWN = WORLD.defaultSpawn;
-const PLAYER_TEXTURE_KEY = 'bernardo-top';
 const CUSTOMER_TEXTURE_KEY = 'cliente-provisorio';
 
+let worldSceneInstances = 0; // contador (diagnóstico): detecta se a cena foi recriada
+
 export class WorldScene extends Phaser.Scene {
+  private instanceId = 0;
   private player!: Phaser.Physics.Arcade.Sprite;
   private inputState!: InputState;
+  private facing: Facing = 'down';
+  private currentAnim = '';
+  private playerShadow!: Phaser.GameObjects.Ellipse;
   private entranceVisual!: Phaser.GameObjects.Arc;
   private isTransitioning = false;
   private entranceArmed = true;
@@ -38,40 +52,42 @@ export class WorldScene extends Phaser.Scene {
     super(SCENE_KEYS.World);
   }
 
+  preload() {
+    preloadBernardoTopdownSprites(this);
+  }
+
   create() {
+    this.instanceId = ++worldSceneInstances;
     this.isTransitioning = false;
     this.entranceArmed = true;
     this.snap = null;
     this.nearCustomer = false;
     this.feedbackPlayedFor = null;
+    this.facing = 'down';
+    this.currentAnim = '';
     this.inputState = this.registry.get('inputState');
     this.registry.set('activeScene', 'world');
 
     this.physics.world.gravity.y = 0;
-    this.physics.world.setBounds(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
-    this.cameras.main.setBounds(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
+    // Limites da física e da câmera, fundo, ruas e prédios vêm de WORLD_MAP (o viewport é independente do mundo)
+    this.physics.world.setBounds(0, 0, WORLD_MAP.width, WORLD_MAP.height);
+    this.cameras.main.setBounds(0, 0, WORLD_MAP.width, WORLD_MAP.height);
     this.cameras.main.fadeIn(200, 0, 0, 0);
 
     // Chão provisório do bairro (placeholder — sem assets definitivos)
-    this.add.rectangle(WORLD_WIDTH / 2, WORLD_HEIGHT / 2, WORLD_WIDTH, WORLD_HEIGHT, 0x3f6212);
+    this.add.rectangle(WORLD_MAP.width / 2, WORLD_MAP.height / 2, WORLD_MAP.width, WORLD_MAP.height, WORLD_MAP.groundColor);
 
     // Ruas provisórias, só pra dar noção de bairro
-    const streetColor = 0x57534e;
-    for (let x = 200; x < WORLD_WIDTH; x += 400) {
-      this.add.rectangle(x, WORLD_HEIGHT / 2, 60, WORLD_HEIGHT, streetColor);
+    for (const x of streetPositions(WORLD_MAP.width, WORLD_MAP.streets)) {
+      this.add.rectangle(x, WORLD_MAP.height / 2, WORLD_MAP.streets.width, WORLD_MAP.height, WORLD_MAP.streetColor);
     }
-    for (let y = 200; y < WORLD_HEIGHT; y += 400) {
-      this.add.rectangle(WORLD_WIDTH / 2, y, WORLD_WIDTH, 60, streetColor);
+    for (const y of streetPositions(WORLD_MAP.height, WORLD_MAP.streets)) {
+      this.add.rectangle(WORLD_MAP.width / 2, y, WORLD_MAP.width, WORLD_MAP.streets.width, WORLD_MAP.streetColor);
     }
 
     // Blocos decorativos representando futuras casas/estabelecimentos (sem colisão nesta etapa)
-    const placeholderBuildings = [
-      { x: 420, y: 320, color: 0xb45309 },
-      { x: 980, y: 420, color: 0x7c2d12 },
-      { x: 600, y: 860, color: 0x92400e },
-    ];
-    placeholderBuildings.forEach((b) => {
-      this.add.rectangle(b.x, b.y, 120, 120, b.color).setStrokeStyle(4, 0x1c1917);
+    WORLD_MAP.buildings.forEach((b) => {
+      this.add.rectangle(b.x, b.y, WORLD_MAP.buildingSize, WORLD_MAP.buildingSize, b.color).setStrokeStyle(4, 0x1c1917);
     });
 
     // Zona de entrada da área especial (trecho de plataforma)
@@ -88,15 +104,23 @@ export class WorldScene extends Phaser.Scene {
       .setOrigin(0.5);
     this.tweens.add({ targets: this.entranceVisual, scale: 1.15, yoyo: true, repeat: -1, duration: 700 });
 
-    // Jogador (Bernardo) — placeholder retangular claramente identificável
-    this.createPlayerTexture();
+    // Jogador (Bernardo top-down). O body é o mesmo 32x44 centrado de antes; o desenho é maior que o body.
+    createBernardoTopdownAnimations(this);
     const returnPoint = consumeWorldReturnPoint();
-    const spawn = returnPoint ?? DEFAULT_SPAWN;
+    const spawn = returnPoint ?? WORLD_MAP.spawn;
     // Voltando da plataforma: a entrada só rearma depois que Bernardo se afastar dela
     if (returnPoint) this.entranceArmed = false;
-    this.player = this.physics.add.sprite(spawn.x, spawn.y, PLAYER_TEXTURE_KEY);
+    this.playerShadow = this.add
+      .ellipse(spawn.x, spawn.y + TOPDOWN_BODY.height / 2, TOPDOWN_SHADOW.width, TOPDOWN_SHADOW.height, 0x000000, TOPDOWN_SHADOW.alpha)
+      .setDepth(0.5);
+    this.player = this.physics.add.sprite(spawn.x, spawn.y, TOPDOWN_SPRITE.textureKey, frameIndex('down', 0));
+    this.player.setOrigin(TOPDOWN_ORIGIN.x, TOPDOWN_ORIGIN.y).setDepth(1);
     this.player.setCollideWorldBounds(true);
-    (this.player.body as Phaser.Physics.Arcade.Body).setSize(32, 44);
+    (this.player.body as Phaser.Physics.Arcade.Body)
+      .setSize(TOPDOWN_BODY.width, TOPDOWN_BODY.height, false)
+      .setOffset(TOPDOWN_BODY_OFFSET.x, TOPDOWN_BODY_OFFSET.y);
+    this.player.anims.play('td-idle-down');
+    this.currentAnim = 'idle-down';
 
     this.cameras.main.startFollow(this.player, true, 0.12, 0.12);
 
@@ -249,6 +273,38 @@ export class WorldScene extends Phaser.Scene {
       goalReached: false,
       entranceArmed: this.entranceArmed,
       fallRespawns: 0,
+      instance: this.instanceId,
+      // durante a troca de cena o sprite já pode ter sido destruído: só lê quando está ativo
+      sprite: this.player?.active
+        ? {
+            anim: this.currentAnim,
+            animPlaying: this.player.anims.isPlaying,
+            texture: this.player.texture.key,
+            frame: Number(this.player.frame.name),
+            flipX: this.player.flipX,
+            scale: this.player.scaleX,
+            body: {
+              x: (this.player.body as Phaser.Physics.Arcade.Body).x,
+              y: (this.player.body as Phaser.Physics.Arcade.Body).y,
+              width: (this.player.body as Phaser.Physics.Arcade.Body).width,
+              height: (this.player.body as Phaser.Physics.Arcade.Body).height,
+            },
+          }
+        : null,
+      camera: (() => {
+        // durante a troca de cena a câmera já pode ter sido destruída
+        if (!this.cameras?.main || !this.physics?.world) return null;
+        const c = this.cameras.main;
+        return {
+          scrollX: c.scrollX,
+          scrollY: c.scrollY,
+          width: c.width,
+          height: c.height,
+          zoom: c.zoom,
+          bounds: c.getBounds ? { x: c.getBounds().x, y: c.getBounds().y, width: c.getBounds().width, height: c.getBounds().height } : null,
+          world: { width: this.physics.world.bounds.width, height: this.physics.world.bounds.height },
+        };
+      })(),
       delivery: {
         loaded: this.snap?.loaded ?? false,
         phase: this.snap?.phase ?? 'idle',
@@ -266,17 +322,6 @@ export class WorldScene extends Phaser.Scene {
 
   teleportPlayer(x: number, y: number) {
     this.player.setPosition(x, y);
-  }
-
-  private createPlayerTexture() {
-    if (this.textures.exists(PLAYER_TEXTURE_KEY)) return;
-    const g = this.make.graphics({ x: 0, y: 0 }, false);
-    g.fillStyle(0x059669, 1);
-    g.fillRoundedRect(0, 0, 32, 44, 8);
-    g.fillStyle(0xfacc15, 1);
-    g.fillRect(8, 8, 16, 10);
-    g.generateTexture(PLAYER_TEXTURE_KEY, 32, 44);
-    g.destroy();
   }
 
   update() {
@@ -302,6 +347,7 @@ export class WorldScene extends Phaser.Scene {
     } else {
       body.setVelocity(0, 0);
     }
+    this.updatePlayerVisual(vx, vy);
 
     if (!this.entranceArmed && distanceToEntrance(this.player) > REARM_DISTANCE) {
       this.entranceArmed = true;
@@ -309,6 +355,17 @@ export class WorldScene extends Phaser.Scene {
     if (this.entranceArmed && isInsideEntrance(this.player)) {
       this.handleEnterPlatform();
     }
+  }
+
+  /** Animação (andando/parado, 4 direções) e sombra. Só visual: não altera velocidade nem collider. */
+  private updatePlayerVisual(dx: number, dy: number) {
+    this.facing = facingFromMovement(this.facing, dx, dy);
+    const name = selectTopdownAnimation(this.facing, dx !== 0 || dy !== 0);
+    if (name !== this.currentAnim) {
+      this.currentAnim = name;
+      this.player.anims.play(`td-${name}`);
+    }
+    this.playerShadow.setPosition(this.player.x, this.player.y + TOPDOWN_BODY.height / 2);
   }
 
   private handleEnterPlatform() {

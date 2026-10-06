@@ -1,14 +1,17 @@
+import { WORLD_MAP } from './worldMap';
+
+/** Dimensões, spawn, entrada e cliente vêm de WORLD_MAP (única fonte). Aqui só a velocidade do jogador. */
 export const WORLD = {
-  width: 1600,
-  height: 1200,
+  width: WORLD_MAP.width,
+  height: WORLD_MAP.height,
   playerSpeed: 220,
-  defaultSpawn: { x: 200, y: 200 },
+  defaultSpawn: WORLD_MAP.spawn,
 } as const;
 
-export const ENTRANCE_ZONE = { x: 1300, y: 900, radius: 42 } as const;
+export const ENTRANCE_ZONE = WORLD_MAP.entrance;
 
 /**
  * Cliente PROVISÓRIO do vertical slice: um ponto fixo no mapa que representa o cliente do pedido ativo
  * (qualquer pedido é entregue aqui, por enquanto). `interactRadius` = distância máxima para entregar.
  */
-export const CUSTOMER_SPOT = { x: 1000, y: 520, interactRadius: 80 } as const;
+export const CUSTOMER_SPOT = WORLD_MAP.customer;
