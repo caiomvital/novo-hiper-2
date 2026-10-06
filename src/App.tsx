@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, Suspense, lazy } from 'react';
 import { Plant, DeliveryDestination, DeliveryRecord, MainTab, CustomerOrder, OrderStatus, CashRegister } from './types';
 import { 
   getStoredPlants, 
@@ -33,6 +33,11 @@ import { DeliveryGameView } from './components/game/DeliveryGameView';
 import { checkIsAuthenticated, logout as performLogout } from './services/auth';
 import { api } from './services/api';
 import { runAutomaticLocalStorageMigration, MigrationResult } from './services/migration';
+
+// Carregado sob demanda: o Phaser só é baixado quando a aba "Aventura (Beta)" é aberta
+const AdventureGameScreen = lazy(() =>
+  import('./phaser-game').then((module) => ({ default: module.AdventureGameScreen }))
+);
 import { Plus, Search, CheckCircle2, Store, Truck, DollarSign, Package, ShoppingBag, Coins, Gamepad2 } from 'lucide-react';
 
 export default function App() {
@@ -848,6 +853,19 @@ export default function App() {
             onGoToOrders={() => setActiveTab('pedidos')}
             onUpdateCashRegister={(updated) => setCashRegister(updated)}
           />
+        )}
+
+        {/* Tab 5: Vertical slice do jogo 2D com Phaser (mapa top-down + plataforma) — protótipo isolado, sem dados reais */}
+        {activeTab === 'aventura' && (
+          <Suspense
+            fallback={
+              <div className="w-full h-[82vh] sm:h-[85vh] max-h-[920px] rounded-3xl border border-stone-800 bg-stone-950 flex items-center justify-center text-stone-400 text-sm">
+                Carregando Aventura 2D...
+              </div>
+            }
+          >
+            <AdventureGameScreen onExit={() => setActiveTab('catalogo')} />
+          </Suspense>
         )}
       </main>
 

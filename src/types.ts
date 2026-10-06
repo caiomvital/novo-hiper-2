@@ -71,7 +71,7 @@ export interface CustomerOrder {
   isDemo?: boolean;
 }
 
-export type MainTab = 'catalogo' | 'pedidos' | 'entregas' | 'jogo';
+export type MainTab = 'catalogo' | 'pedidos' | 'entregas' | 'jogo' | 'aventura';
 
 export interface SaleRecord {
   id: string;
