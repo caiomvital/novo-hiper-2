@@ -12,6 +12,7 @@ existentes**; qualquer coluna nova exigiria `ALTER TABLE` improvisado. Não havi
 Código em `backend/migrations/`:
 - `001_baseline.ts` — o schema anterior, verbatim (`IF NOT EXISTS`): no-op em banco existente (só registra a versão), cria tudo em banco novo.
 - `002_plants_deleted_at.ts` — `ALTER TABLE plants ADD COLUMN deleted_at INTEGER` + índice.
+- `003_sessions.ts` — tabela `sessions` (id = SHA-256 do token, created_at, last_seen_at, expires_at) + índice (Fase 1E).
 - `index.ts` — lista oficial **em ordem**; `runner.ts` — `runMigrations(db)`, chamado por `getDb()` uma vez ao abrir o banco.
 - Tabela de controle **`schema_migrations(version PK, name, checksum, applied_at)`**.
 

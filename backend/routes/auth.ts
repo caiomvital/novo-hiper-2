@@ -1,70 +1,94 @@
 import { Router, Request, Response } from 'express';
-import crypto from 'crypto';
+import { getDb } from '../db';
+import { getAuthConfig } from '../auth/config';
+import { loginRateLimit } from '../auth/middleware';
+import {
+  createSession,
+  purgeExpiredSessions,
+  readSessionToken,
+  revokeSession,
+  SESSION_COOKIE,
+} from '../auth/sessions';
+import { safeEqual } from '../auth/password';
 
 export const authRouter = Router();
 
-// Hash padrão de 'NovoHiper2026' com salt 'novohiper_salt_'
-const DEFAULT_SALT = process.env.AUTH_SALT || 'novohiper_salt_';
-const DEFAULT_PASSWORD_HASH = 
-  process.env.AUTH_PASSWORD_HASH || 
-  'dd1749e9e97004e46f4208d372ba40b4ae5e34521c8e8da05c9708ab7c20c9cd';
+const cookieOptions = () => {
+  const cfg = getAuthConfig();
+  return {
+    httpOnly: true,
+    secure: cfg.cookieSecure,
+    sameSite: 'strict' as const,
+    path: '/',
+  };
+};
 
-function verifyPasswordHash(password: string): boolean {
+// POST /api/auth/login — valida no servidor, cria sessão no banco e envia cookie HttpOnly.
+// O corpo da resposta NÃO contém token nem segredo reutilizável.
+authRouter.post('/login', async (req: Request, res: Response): Promise<void> => {
+  res.setHeader('Cache-Control', 'no-store');
   try {
-    const inputHash = crypto
-      .createHash('sha256')
-      .update(DEFAULT_SALT + password)
-      .digest('hex');
-
-    const targetHash = (process.env.AUTH_PASSWORD_HASH || DEFAULT_PASSWORD_HASH).trim().toLowerCase();
-
-    const bufInput = Buffer.from(inputHash, 'hex');
-    const bufTarget = Buffer.from(targetHash, 'hex');
-
-    if (bufInput.length !== bufTarget.length) {
-      return false;
+    const cfg = getAuthConfig();
+    if (cfg.mode === 'unconfigured') {
+      res.status(503).json({ code: 'AUTH_NOT_CONFIGURED', error: 'Autenticação não configurada neste ambiente.' });
+      return;
     }
 
-    return crypto.timingSafeEqual(bufInput, bufTarget);
-  } catch (err) {
-    console.error('Erro na validação de hash da senha:', err);
-    return false;
+    const key = req.ip || 'unknown';
+    const wait = loginRateLimit.blockedFor(key);
+    if (wait > 0) {
+      res.setHeader('Retry-After', String(wait));
+      res.status(429).json({ code: 'TOO_MANY_ATTEMPTS', error: 'Muitas tentativas. Aguarde alguns minutos e tente novamente.' });
+      return;
+    }
+
+    const { username, password } = req.body || {};
+    if (typeof username !== 'string' || !username.trim() || typeof password !== 'string' || !password.trim()) {
+      res.status(400).json({ error: 'Informe usuário e senha.' });
+      return;
+    }
+
+    // Sempre calcula a senha (mesmo com usuário errado) para não vazar, por tempo, qual campo falhou.
+    const passwordOk = cfg.checkPassword(password.trim());
+    const userOk = safeEqual(username.trim().toLowerCase(), cfg.username.toLowerCase());
+    if (!(passwordOk && userOk)) {
+      loginRateLimit.fail(key);
+      res.status(401).json({ success: false, error: 'Usuário ou senha incorretos.' });
+      return;
+    }
+
+    loginRateLimit.success(key);
+    const db = await getDb();
+    await purgeExpiredSessions(db); // limpeza oportunista, sem cron
+    const { token, expiresAt } = await createSession(db, cfg.sessionTtlMs);
+    res.cookie(SESSION_COOKIE, token, { ...cookieOptions(), maxAge: cfg.sessionTtlMs });
+    res.json({ success: true, user: cfg.username, expiresAt });
+  } catch (error) {
+    console.error('Erro no login:', (error as Error)?.message);
+    res.status(500).json({ error: 'Erro ao processar o login.' });
   }
-}
-
-// POST /api/auth/login - Validação de credenciais no servidor
-authRouter.post('/login', (req: Request, res: Response): void => {
-  const { username, password } = req.body;
-
-  if (!username || typeof username !== 'string' || !username.trim()) {
-    res.status(400).json({ error: 'Nome de usuário é obrigatório.' });
-    return;
-  }
-
-  if (!password || typeof password !== 'string' || !password.trim()) {
-    res.status(400).json({ error: 'Senha é obrigatória.' });
-    return;
-  }
-
-  const expectedUser = (process.env.AUTH_USERNAME || 'Bernardo').trim().toLowerCase();
-  const inputUser = username.trim().toLowerCase();
-
-  const isUserValid = inputUser === expectedUser;
-  const isPasswordValid = verifyPasswordHash(password.trim());
-
-  if (isUserValid && isPasswordValid) {
-    const sessionToken = `nh_sess_${crypto.randomBytes(24).toString('hex')}`;
-    res.json({
-      success: true,
-      user: process.env.AUTH_USERNAME || 'Bernardo',
-      token: sessionToken,
-      timestamp: Date.now(),
-    });
-    return;
-  }
-
-  res.status(401).json({
-    success: false,
-    error: 'Usuário ou senha incorretos. Verifique e tente novamente.',
-  });
 });
+
+// GET /api/auth/session — privada: 200 com a sessão válida; sem sessão válida o middleware responde 401.
+authRouter.get('/session', async (req: Request, res: Response): Promise<void> => {
+  res.setHeader('Cache-Control', 'no-store');
+  const cfg = getAuthConfig();
+  const session = (req as any).session as { expiresAt: number } | undefined;
+  res.json({ authenticated: true, user: cfg.username, expiresAt: session?.expiresAt });
+});
+
+// POST /api/auth/logout — pública e idempotente: invalida a sessão no servidor (se houver) e limpa o cookie.
+authRouter.post('/logout', async (req: Request, res: Response): Promise<void> => {
+  res.setHeader('Cache-Control', 'no-store');
+  try {
+    const db = await getDb();
+    const token = readSessionToken(req.headers.cookie);
+    await revokeSession(db, token);
+    res.clearCookie(SESSION_COOKIE, cookieOptions());
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Erro no logout:', (error as Error)?.message);
+    res.status(500).json({ error: 'Erro ao encerrar a sessão.' });
+  }
+});
+

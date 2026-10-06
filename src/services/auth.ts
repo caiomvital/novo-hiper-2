@@ -1,16 +1,18 @@
 /**
  * Serviço de Autenticação do Novo Hiper
- * 
- * A validação de credenciais é realizada exclusivamente no servidor Node.js.
- * Nenhuma senha ou hash de senha é exposta no bundle do frontend.
+ *
+ * A AUTORIDADE é o servidor: a sessão é um cookie HttpOnly (SameSite=Strict) emitido no login e validado a cada
+ * requisição /api. Nada de token, senha ou flag de "logado" é guardado no navegador (nem em localStorage).
+ * O frontend apenas PERGUNTA ao servidor se a sessão atual é válida.
  */
 
-export const AUTH_SESSION_KEY = 'novo_hiper_session_auth';
+/** Chave do antigo flag de login em localStorage (removida: nunca mais é autoridade). */
+const LEGACY_AUTH_FLAG_KEY = 'novo_hiper_session_auth';
 
-export interface AuthSession {
-  user: string;
-  loggedInAt: number;
-}
+/** Disparado pelo cliente da API quando qualquer chamada recebe 401 (sessão inválida/expirada). */
+export const UNAUTHORIZED_EVENT = 'novo-hiper:unauthorized';
+
+const API_BASE = import.meta.env.VITE_API_URL || '/api';
 
 export interface LoginResult {
   success: boolean;
@@ -18,95 +20,62 @@ export interface LoginResult {
   user?: string;
 }
 
-/**
- * Verifica se existe uma sessão ativa válida salva localmente.
- */
-export function checkIsAuthenticated(): boolean {
+export interface SessionInfo {
+  authenticated: boolean;
+  user?: string;
+}
+
+/** Remove o resquício do modelo antigo (flag em localStorage). Não toca em dados do negócio. */
+export function clearLegacyAuthFlag(): void {
   try {
-    const raw = localStorage.getItem(AUTH_SESSION_KEY);
-    if (!raw) return false;
-    const session: AuthSession = JSON.parse(raw);
-    return Boolean(session && session.user);
+    localStorage.removeItem(LEGACY_AUTH_FLAG_KEY);
   } catch {
-    return false;
+    /* ignore */
   }
 }
 
-/**
- * Obtém o nome do usuário atualmente conectado.
- */
-export function getCurrentUser(): string {
+/** Pergunta ao servidor se há sessão válida. Erro de rede ≠ sessão inválida (devolve `unknown`). */
+export async function checkSession(): Promise<SessionInfo | 'unknown'> {
   try {
-    const raw = localStorage.getItem(AUTH_SESSION_KEY);
-    if (!raw) return 'Bernardo';
-    const session: AuthSession = JSON.parse(raw);
-    return session.user || 'Bernardo';
+    const res = await fetch(`${API_BASE}/auth/session`, { credentials: 'same-origin', cache: 'no-store' });
+    if (res.status === 401) return { authenticated: false };
+    if (!res.ok) return 'unknown';
+    const data = await res.json();
+    return { authenticated: Boolean(data.authenticated), user: data.user };
   } catch {
-    return 'Bernardo';
+    return 'unknown';
   }
 }
 
-/**
- * Valida o usuário e a senha fornecidos contra o backend Node.js.
- * O hash seguro é verificado exclusivamente no servidor.
- */
+/** Valida usuário/senha NO SERVIDOR; em caso de sucesso o servidor já define o cookie de sessão. */
 export async function login(usernameInput: string, passwordInput: string): Promise<LoginResult> {
-  const trimmedUser = usernameInput.trim();
-  const trimmedPassword = passwordInput.trim();
-
-  if (!trimmedUser || !trimmedPassword) {
-    return {
-      success: false,
-      error: 'Por favor, preencha o nome de usuário e a senha para entrar.',
-    };
+  const username = usernameInput.trim();
+  const password = passwordInput.trim();
+  if (!username || !password) {
+    return { success: false, error: 'Por favor, preencha o nome de usuário e a senha para entrar.' };
   }
-
-  const apiBase = import.meta.env.VITE_API_URL || '/api';
-
   try {
-    const res = await fetch(`${apiBase}/auth/login`, {
+    const res = await fetch(`${API_BASE}/auth/login`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        username: trimmedUser,
-        password: trimmedPassword,
-      }),
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password }),
     });
-
     const data = await res.json().catch(() => ({}));
-
-    if (res.ok && data.success) {
-      const session: AuthSession = {
-        user: data.user || trimmedUser,
-        loggedInAt: Date.now(),
-      };
-      localStorage.setItem(AUTH_SESSION_KEY, JSON.stringify(session));
-      return { success: true, user: session.user };
-    }
-
-    return {
-      success: false,
-      error: data.error || 'Usuário ou senha incorretos. Verifique e tente novamente.',
-    };
+    if (res.ok && data.success) return { success: true, user: data.user || username };
+    if (res.status === 429) return { success: false, error: data.error || 'Muitas tentativas. Aguarde alguns minutos.' };
+    return { success: false, error: data.error || 'Usuário ou senha incorretos. Verifique e tente novamente.' };
   } catch (err) {
-    console.error('Erro ao conectar com servidor de autenticação:', err);
-    return {
-      success: false,
-      error: 'Não foi possível conectar ao servidor para validar o acesso. Verifique sua conexão.',
-    };
+    console.error('Erro ao conectar com servidor de autenticação');
+    return { success: false, error: 'Não foi possível conectar ao servidor para validar o acesso. Verifique sua conexão.' };
   }
 }
 
-/**
- * Encerra a sessão atual removendo os dados de autenticação do localStorage,
- * sem apagar nenhuma planta, pedido, estoque ou caixa da loja.
- */
-export function logout(): void {
+/** Invalida a sessão NO SERVIDOR e limpa o cookie. Não apaga plantas, pedidos, estoque nem caixa. */
+export async function logout(): Promise<void> {
   try {
-    localStorage.removeItem(AUTH_SESSION_KEY);
-  } catch (err) {
-    console.error('Erro ao encerrar sessão no localStorage:', err);
+    await fetch(`${API_BASE}/auth/logout`, { method: 'POST', credentials: 'same-origin' });
+  } catch {
+    /* sem rede: o cookie expira sozinho; a UI volta ao login de qualquer forma */
   }
 }

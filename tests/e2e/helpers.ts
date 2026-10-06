@@ -3,8 +3,9 @@ import { PLATFORM, PLATFORM_GOAL, getGaps } from '../../src/phaser-game/config/p
 import type { AdventureDiagnostics } from '../../src/phaser-game/debug/diagnostics';
 
 export const USERNAME = 'Bernardo';
-// Senha padrão de desenvolvimento (já exibida na tela de login e documentada em .env.example)
-export const PASSWORD = process.env.E2E_PASSWORD ?? 'NovoHiper2026';
+// Credencial EXCLUSIVA do backend de desenvolvimento/teste (AUTH_DEV_INSECURE_PASSWORD; recusada em produção).
+// Não é, e nunca deve ser, a senha de produção.
+export const PASSWORD = process.env.E2E_PASSWORD ?? 'dev-only-test-password-1';
 
 export async function login(page: Page) {
   await page.goto('/');

@@ -85,11 +85,11 @@ CORS_ORIGIN=https://novohiper.seudominio.com.br
 # Prefixo da API REST para o frontend PWA
 VITE_API_URL=/api
 
-# Autenticação da Loja no Servidor (apenas hash, sem senhas no frontend)
+# Autenticação (obrigatório em produção; sem senha padrão). Veja docs/AUTH_AND_SESSIONS.md
 AUTH_USERNAME=Bernardo
-# Hash SHA-256 (opcional: deixe em branco para usar o padrão inicial ou gere com echo -n "novohiper_salt_SENHA" | sha256sum)
+# Gere com: node scripts/hash-password.mjs  (formato scrypt:N:r:p:salt:hash)
 AUTH_PASSWORD_HASH=
-AUTH_SALT=novohiper_salt_
+SESSION_TTL_DAYS=30
 ```
 
 ---

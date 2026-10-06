@@ -265,6 +265,8 @@ export const DeliveryMap: React.FC<DeliveryMapProps> = ({
 
   const handleConfirmDelivery = () => {
     if (!selectedPlant || !selectedDestination) return;
+    // Entrega avulsa (sem pedido) foi desativada: dinheiro só entra pelo fluxo de pedido/entrega
+    if (!activeOrder) return;
 
     if ((selectedPlant.stock ?? 0) <= 0) {
       sounds.playPop();
@@ -802,13 +804,15 @@ export const DeliveryMap: React.FC<DeliveryMapProps> = ({
                 <button
                   id="btn-confirm-delivery"
                   type="button"
-                  disabled={isDelivering || (selectedPlant.stock ?? 0) <= 0}
+                  disabled={isDelivering || !activeOrder || (selectedPlant.stock ?? 0) <= 0}
                   onClick={handleConfirmDelivery}
                   className="w-full py-3.5 px-4 rounded-2xl bg-emerald-700 hover:bg-emerald-800 active:bg-emerald-900 text-white font-display font-bold text-base shadow-md shadow-emerald-800/20 transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
                 >
                   <Truck className="w-5 h-5" />
                   <span>
-                    {(selectedPlant.stock ?? 0) <= 0
+                    {!activeOrder
+                      ? 'Escolha um pedido para entregar'
+                      : (selectedPlant.stock ?? 0) <= 0
                       ? 'Sem Estoque para Envio'
                       : isDelivering
                       ? 'Despachando Entrega...'

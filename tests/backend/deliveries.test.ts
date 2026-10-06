@@ -152,7 +152,8 @@ describe('POST /deliveries/:id/finish — comportamento ATUAL', () => {
   it('a repetição não exige que o caixa global seja igual: outras operações legítimas entre as chamadas são aceitas', async () => {
     const { delivery } = await scenario(5, 2, 10);
     await s.post(`/api/deliveries/${delivery.id}/finish`);
-    await s.post('/api/cash/transactions', { amount: 5, type: 'debit', description: 'outra operação legítima' });
+    // outra operação legítima no caixa entre as chamadas (inserida direto: a rota manual foi desativada na 1E)
+    await s.db.run("INSERT INTO cash_transactions (id, amount, type, description, created_at) VALUES ('tx_outra', 5, 'debit', 'outra operação', ?)", Date.now());
     const again = await s.post(`/api/deliveries/${delivery.id}/finish`);
     expect(again.status).toBe(200);
     expect(again.body.alreadyApplied).toBe(true);

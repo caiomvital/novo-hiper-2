@@ -41,6 +41,17 @@ export async function runAutomaticLocalStorageMigration(): Promise<MigrationResu
       (serverStatus?.counts?.plants || 0) > 0 ||
       (serverStatus?.counts?.orders || 0) > 0;
 
+    // 2.1 Importação legada desativada no servidor (produção, depois de concluída): não há o que enviar.
+    //     Marca como concluída para não tentar de novo e NÃO exibe erro ao usuário.
+    if (serverStatus?.legacyMigrationEnabled === false) {
+      localStorage.setItem(MIGRATION_FLAG_KEY, 'true');
+      return {
+        migrated: true,
+        message: 'Base SQLite é a fonte de verdade. A importação do localStorage está desativada neste ambiente.',
+        counts: serverStatus?.counts,
+      };
+    }
+
     // 3. Verificar se a migração já foi realizada com sucesso anteriormente.
     // Esta flag é autoritativa: uma vez migrado, nunca migrar de novo,
     // independentemente de o backend estar vazio ou ter dados. Um backend

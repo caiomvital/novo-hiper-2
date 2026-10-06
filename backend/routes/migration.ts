@@ -38,6 +38,17 @@ function saveBase64Image(dataUrl: string, fallbackName: string): string {
   }
 }
 
+// ── Importação legada do localStorage (Fase 1E) ─────────────────────────────────────────────────
+// A migração já foi feita (a produção contém os dados importados). Esta rota permite a um cliente enviar plantas,
+// pedidos, entregas e HISTÓRICO DE VENDAS (que viram créditos no caixa) — um vetor de dinheiro arbitrário. Portanto:
+//   • exige sessão (como toda rota /api);
+//   • em PRODUÇÃO fica DESATIVADA por padrão (403 LEGACY_MIGRATION_DISABLED); só liga com ENABLE_LEGACY_MIGRATION=true;
+//   • mesmo ligada, só importa para um banco SEM operações (orders/deliveries/cash_transactions vazios) — nunca
+//     "mescla" dinheiro em um banco que já opera (409 MIGRATION_NOT_ALLOWED);
+//   • fora de produção (dev/testes) continua habilitada.
+export const isLegacyMigrationEnabled = () =>
+  process.env.ENABLE_LEGACY_MIGRATION === 'true' || process.env.NODE_ENV !== 'production';
+
 // GET /api/migration/status - Verificar estado atual do banco
 migrationRouter.get('/status', async (_req: Request, res: Response) => {
   try {
@@ -51,6 +62,7 @@ migrationRouter.get('/status', async (_req: Request, res: Response) => {
 
     res.json({
       initialized: true,
+      legacyMigrationEnabled: isLegacyMigrationEnabled(),
       counts: {
         plants: plantsCount?.count || 0,
         customers: customersCount?.count || 0,
@@ -77,7 +89,28 @@ migrationRouter.post('/', async (req: Request, res: Response) => {
     upgrades = [] 
   } = req.body;
 
+  if (!isLegacyMigrationEnabled()) {
+    res.status(403).json({
+      code: 'LEGACY_MIGRATION_DISABLED',
+      error: 'A importação do localStorage está desativada neste ambiente (a migração legada já foi concluída).',
+    });
+    return;
+  }
+
   const db = await getDb();
+  const operations = await db.get(`
+    SELECT (SELECT COUNT(*) FROM orders) AS orders,
+           (SELECT COUNT(*) FROM deliveries) AS deliveries,
+           (SELECT COUNT(*) FROM cash_transactions) AS cash
+  `);
+  if (operations.orders > 0 || operations.deliveries > 0 || operations.cash > 0) {
+    res.status(409).json({
+      code: 'MIGRATION_NOT_ALLOWED',
+      error: 'O banco já possui pedidos, entregas ou lançamentos de caixa; a importação legada só é permitida em banco sem operações.',
+    });
+    return;
+  }
+
   let migratedPlants = 0;
   let migratedCustomers = 0;
   let migratedOrders = 0;

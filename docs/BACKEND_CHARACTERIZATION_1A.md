@@ -25,14 +25,14 @@ Cada teste sobe o **app Express real** numa porta efêmera de `127.0.0.1`, com u
 |---|---|---|---|
 | B1 ✅ **corrigido na 1D** | **Excluir planta referenciada por pedido entregue → HTTP 500** (FK de `order_items`, mensagem genérica). Hipótese da FK **confirmada**. | Média | 1D |
 | B2 ✅ **corrigido na 1C** | `PUT /api/orders/:id` aceitava `status:"entregue"` **sem** baixar estoque nem creditar caixa; depois o `start` é bloqueado. Pedido "entregue" que nunca virou dinheiro/estoque. | Alta | 1C/1E |
-| B3 | `POST /api/cash/transactions` aceita **crédito livre** sem pedido (dinheiro "do nada"). | Alta | 1E |
-| B4 | Tipo `adjustment` é **subtraído** do saldo (tratado como débito) e não exige saldo. | Média | 1E |
+| B3 ✅ **corrigido na 1E** | `POST /api/cash/transactions` aceitava **crédito livre** sem pedido (dinheiro "do nada"). | Alta | 1E |
+| B4 ✅ **resolvido na 1E** (rota desativada) | Tipo `adjustment` é **subtraído** do saldo (tratado como débito) e não exige saldo. | Média | 1E |
 | B5 | Criar pedido cria o **cliente antes** de validar os itens: pedido inválido deixa cliente órfão. | Baixa | futura |
 | B6 | Criar pedido **não verifica nem reserva estoque** (pode pedir 50 de 1); falha só no `start`/`finish`. | Média (para Fase 4) | 4A |
 | B7 | `id` duplicado em planta/pedido → **500** (deveria ser 409). | Baixa | futura |
 | B8 | `quantity` 0/inválida vira 1 silenciosamente (`parseInt(...) \|\| 1`); estoque decimal é truncado. | Baixa | futura |
 | B9 | Caixa em `REAL`: `0.1 + 0.2` armazenado como `0.30000000000000004` (exibição arredonda). | Baixa/Média | D8 (centavos nas novas tabelas) |
-| B10 | Sem autenticação em nenhuma rota (já conhecido, G1). Não testado aqui (1E). | Crítica | 1E |
+| B10 ✅ **corrigido na 1E** | Sem autenticação em nenhuma rota (G1). Agora toda `/api` exige sessão (ver `docs/AUTH_AND_SESSIONS.md`). | Crítica | — |
 
 ## Encaminhamento dos achados (decidido após a 1A)
 - **B2** → Fase **1C** (o `PUT /orders/:id` não poderá marcar `entregue`).
@@ -84,3 +84,6 @@ A regra é avaliada antes da busca do pedido.
 ## Fase 1D — exclusão lógica de plantas
 Resolve **B1**: `DELETE /api/plants/:id` agora é soft-delete (`plants.deleted_at`, migration 002). Ver
 `docs/PLANTS_SOFT_DELETE.md` (semântica, política de pedidos, auditoria de consultas) e `docs/MIGRATIONS.md` (mecanismo).
+
+## Fase 1E — autenticação
+Resolve **B3, B4 e B10** e restringe `/api/migration`. Detalhes, endpoints públicos/privados, CSRF, variáveis e checklist de implantação em `docs/AUTH_AND_SESSIONS.md`.

@@ -17,6 +17,7 @@ docker run -d --name novo-hiper-dev-api --restart no \
   -p 127.0.0.1:$DEV_API_PORT:$DEV_API_PORT \
   -v "$PWD":/app -w /app \
   -e DEV_API_BIND=0.0.0.0 -e NODE_ENV=development -e DEV_API_PORT -e AUTH_USERNAME=Bernardo \
+  -e AUTH_DEV_INSECURE_PASSWORD=dev-only-test-password-1 \
   -e DATA_DIR=/app/data-dev -e DATABASE_PATH=/app/data-dev/novo-hiper-dev.db -e UPLOADS_DIR=/app/uploads-dev \
   --entrypoint npx novo-hiper-novo-hiper tsx dev-backend.ts > data-dev/backend.cid
 nohup npx vite --host 127.0.0.1 --port 5173 --strictPort > data-dev/vite.log 2>&1 &

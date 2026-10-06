@@ -22,7 +22,9 @@ services:
       - CORS_ORIGIN=${CORS_ORIGIN:-}
       - AUTH_USERNAME=${AUTH_USERNAME:-Bernardo}
       - AUTH_PASSWORD_HASH=${AUTH_PASSWORD_HASH:-}
-      - AUTH_SALT=${AUTH_SALT:-novohiper_salt_}
+      - SESSION_TTL_DAYS=${SESSION_TTL_DAYS:-30}
+      # Importação legada do localStorage: DESATIVADA por padrão em produção (ver docs/AUTH_AND_SESSIONS.md)
+      - ENABLE_LEGACY_MIGRATION=${ENABLE_LEGACY_MIGRATION:-false}
     networks:
       - novo-hiper-net
 

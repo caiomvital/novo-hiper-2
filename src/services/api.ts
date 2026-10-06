@@ -1,3 +1,4 @@
+import { UNAUTHORIZED_EVENT } from './auth';
 import { Plant, DeliveryRecord, CustomerOrder, OrderStatus, CashRegister, SaleRecord } from '../types';
 
 const API_BASE = import.meta.env.VITE_API_URL || '/api';
@@ -16,7 +17,13 @@ class ApiClient {
     const response = await fetch(url, {
       ...options,
       headers,
+      credentials: 'same-origin', // cookie de sessão HttpOnly (mesma origem)
     });
+
+    // Sessão inválida/expirada no servidor: avisa a aplicação (volta ao login sem apagar dados do negócio)
+    if (response.status === 401 && typeof window !== 'undefined') {
+      window.dispatchEvent(new Event(UNAUTHORIZED_EVENT));
+    }
 
     if (!response.ok) {
       let errorMessage = `Erro na requisição (${response.status})`;
@@ -293,19 +300,6 @@ class ApiClient {
     };
   }
 
-  async registerCashTransaction(data: {
-    order_id?: string;
-    delivery_id?: string;
-    amount: number;
-    type: 'credit' | 'debit' | 'upgrade_purchase' | 'adjustment';
-    description?: string;
-  }): Promise<any> {
-    return this.request<any>('/cash/transactions', {
-      method: 'POST',
-      body: JSON.stringify(data),
-    });
-  }
-
   // --- Jogo / Estado ---
   async getGameCurrent(): Promise<any> {
     return this.request<any>('/game/current');
@@ -326,8 +320,8 @@ class ApiClient {
   }
 
   // --- Migração ---
-  async getMigrationStatus(): Promise<{ initialized: boolean; counts: any }> {
-    return this.request<{ initialized: boolean; counts: any }>('/migration/status');
+  async getMigrationStatus(): Promise<{ initialized: boolean; legacyMigrationEnabled?: boolean; counts: any }> {
+    return this.request<{ initialized: boolean; legacyMigrationEnabled?: boolean; counts: any }>('/migration/status');
   }
 
   async migrateFromLocalStorage(payload: any): Promise<any> {

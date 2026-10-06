@@ -1,6 +1,5 @@
 import { Router, Request, Response } from 'express';
 import { getDb } from '../db';
-import crypto from 'crypto';
 
 export const cashRouter = Router();
 
@@ -67,80 +66,16 @@ cashRouter.get('/', async (_req: Request, res: Response) => {
   }
 });
 
-// POST /api/cash/transactions - Registrar transação no caixa (ex: compra de melhoria ou ajuste)
-cashRouter.post('/transactions', async (req: Request, res: Response) => {
-  try {
-    const { order_id, delivery_id, amount, type, description } = req.body;
-
-    const parsedAmount = parseFloat(amount);
-    if (isNaN(parsedAmount) || parsedAmount <= 0) {
-      res.status(400).json({ error: 'Valor da transação deve ser positivo maior que zero.' });
-      return;
-    }
-
-    const validTypes = ['credit', 'debit', 'upgrade_purchase', 'adjustment'];
-    if (!type || !validTypes.includes(type)) {
-      res.status(400).json({ error: `Tipo inválido. Aceitos: ${validTypes.join(', ')}` });
-      return;
-    }
-
-    const db = await getDb();
-
-    // Se a transação estiver vinculada a um pedido, garantir que não seja registrada duas vezes
-    if (order_id) {
-      const existing = await db.get('SELECT id FROM cash_transactions WHERE order_id = ?', order_id);
-      if (existing) {
-        res.status(409).json({ error: 'Pagamento já registrado para este pedido.' });
-        return;
-      }
-    }
-
-    // Se for débito ou compra de melhoria, validar se há saldo suficiente no caixa
-    if (type === 'debit' || type === 'upgrade_purchase') {
-      const current = await db.get(`
-        SELECT COALESCE(SUM(CASE WHEN type = 'credit' THEN amount ELSE -amount END), 0) AS balance
-        FROM cash_transactions
-      `);
-      const currentBalance = current?.balance || 0;
-      if (currentBalance < parsedAmount) {
-        res.status(400).json({ 
-          error: `Saldo insuficiente no caixa (${currentBalance.toFixed(2)}) para efetuar a operação (${parsedAmount.toFixed(2)}).` 
-        });
-        return;
-      }
-    }
-
-    const txId = `tx_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
-    const now = Date.now();
-
-    await db.run(`
-      INSERT INTO cash_transactions (id, order_id, delivery_id, amount, type, description, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `, [
-      txId,
-      order_id || null,
-      delivery_id || null,
-      parsedAmount,
-      type,
-      description || null,
-      now,
-    ]);
-
-    const created = await db.get('SELECT * FROM cash_transactions WHERE id = ?', txId);
-    const summary = await db.get(`
-      SELECT 
-        COALESCE(SUM(CASE WHEN type = 'credit' THEN amount ELSE -amount END), 0) AS balance,
-        COALESCE(SUM(CASE WHEN type = 'credit' THEN amount ELSE 0 END), 0) AS total_sales
-      FROM cash_transactions
-    `);
-
-    res.status(201).json({
-      transaction: created,
-      balance: Math.round((summary?.balance || 0) * 100) / 100,
-      totalSales: Math.round((summary?.total_sales || 0) * 100) / 100,
-    });
-  } catch (error) {
-    console.error('Erro ao registrar transação no caixa:', error);
-    res.status(500).json({ error: 'Erro ao registrar transação financeira.' });
-  }
+// POST /api/cash/transactions — DESATIVADA (Fase 1E).
+// Antes, qualquer cliente criava crédito/ajuste arbitrário ("dinheiro do nada"). Auditoria dos consumidores:
+//   • único uso no frontend: crédito de ENTREGA AVULSA (sem pedido) em App.tsx → essa ação de crédito foi removida;
+//   • upgrades da loja (câmera/ventilador) mexem só no localStorage — não chamavam esta rota;
+//   • créditos de pedidos nascem SOMENTE dentro de POST /api/deliveries/:id/finish (transacional/idempotente).
+// Decisão de negócio: o crédito de venda nasce SOMENTE do fluxo de pedido/entrega (finish). Não existe venda avulsa.
+// Débitos/compras futuros terão endpoint próprio, atômico e idempotente (Fase 6). Não há operação manual legítima aqui.
+cashRouter.post('/transactions', (_req: Request, res: Response) => {
+  res.status(403).json({
+    code: 'CASH_TRANSACTIONS_DISABLED',
+    error: 'Lançamentos manuais no caixa foram desativados. Vendas são creditadas ao finalizar a entrega (POST /api/deliveries/:id/finish).',
+  });
 });

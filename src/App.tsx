@@ -30,7 +30,7 @@ import { LoginScreen } from './components/LoginScreen';
 import { OfflineBanner } from './components/OfflineBanner';
 import { BackendStatusBanner } from './components/BackendStatusBanner';
 import { DeliveryGameView } from './components/game/DeliveryGameView';
-import { checkIsAuthenticated, logout as performLogout } from './services/auth';
+import { checkSession, clearLegacyAuthFlag, logout as performLogout, UNAUTHORIZED_EVENT } from './services/auth';
 import { api } from './services/api';
 import { runAutomaticLocalStorageMigration, MigrationResult } from './services/migration';
 
@@ -41,7 +41,26 @@ const AdventureGameScreen = lazy(() =>
 import { Plus, Search, CheckCircle2, Store, Truck, DollarSign, Package, ShoppingBag, Coins, Gamepad2 } from 'lucide-react';
 
 export default function App() {
-  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => checkIsAuthenticated());
+  // Autenticação: a AUTORIDADE é a sessão no servidor (cookie HttpOnly). 'checking' = ainda perguntando ao servidor.
+  const [authStatus, setAuthStatus] = useState<'checking' | 'authenticated' | 'anonymous'>('checking');
+  const isAuthenticated = authStatus === 'authenticated';
+  const setIsAuthenticated = (value: boolean) => setAuthStatus(value ? 'authenticated' : 'anonymous');
+
+  useEffect(() => {
+    clearLegacyAuthFlag(); // remove o antigo flag de login do localStorage (não é mais autoridade)
+    let active = true;
+    checkSession().then((s) => {
+      if (!active) return;
+      setAuthStatus(s !== 'unknown' && s.authenticated ? 'authenticated' : 'anonymous');
+    });
+    // Qualquer API que responda 401 → sessão inválida: volta ao login SEM apagar dados do negócio
+    const onUnauthorized = () => setAuthStatus('anonymous');
+    window.addEventListener(UNAUTHORIZED_EVENT, onUnauthorized);
+    return () => {
+      active = false;
+      window.removeEventListener(UNAUTHORIZED_EVENT, onUnauthorized);
+    };
+  }, []);
   const [plants, setPlants] = useState<Plant[]>(() => getStoredPlants());
   const [deliveries, setDeliveries] = useState<DeliveryRecord[]>(() => getStoredDeliveries());
   const [destinations, setDestinations] = useState<DeliveryDestination[]>(() => getStoredDestinations());
@@ -62,6 +81,7 @@ export default function App() {
 
   // Inicializar e conectar ao backend Node.js + SQLite com migração segura do localStorage
   useEffect(() => {
+    if (authStatus !== 'authenticated') return; // só sincroniza com a API depois de autenticado
     let isMounted = true;
 
     async function initializeBackendSync() {
@@ -109,7 +129,7 @@ export default function App() {
     return () => {
       isMounted = false;
     };
-  }, []);
+  }, [authStatus]);
 
   const handleManualMigration = async () => {
     setIsMigrating(true);
@@ -396,6 +416,11 @@ export default function App() {
   };
 
   const handleDeliveryComplete = (record: DeliveryRecord, linkedOrderId?: string) => {
+    // Crédito de venda SÓ nasce do fluxo de pedido/entrega. Entrega avulsa (sem pedido) não gera dinheiro nem baixa estoque.
+    if (!linkedOrderId) {
+      showToast('Para receber o pagamento, entregue um pedido de cliente (aba Pedidos).');
+      return;
+    }
     // 1. Record delivery history
     setDeliveries((prev) => [record, ...prev]);
 
@@ -449,14 +474,6 @@ export default function App() {
           .catch((err) => {
             console.warn('[Backend SQLite]: Registro de entrega processado ou em andamento:', err);
           });
-      } else {
-        api.registerCashTransaction({
-          amount: record.plantPrice,
-          type: 'credit',
-          description: `Entrega de ${record.plantName}`,
-        }).catch((err) => {
-          console.warn('[Backend SQLite]: Erro ao registrar transação no caixa:', err);
-        });
       }
     }
   };
@@ -558,10 +575,19 @@ export default function App() {
 
   const handleLogout = () => {
     sounds.playPlim();
-    performLogout();
+    void performLogout(); // invalida a sessão no servidor e limpa o cookie
     setIsAuthenticated(false);
     showToast('Você saiu da loja. Até logo, Bernardo!');
   };
+
+  // Ainda perguntando ao servidor se a sessão é válida (evita "piscar" a tela de login)
+  if (authStatus === 'checking') {
+    return (
+      <div className="min-h-screen bg-stone-100 flex items-center justify-center text-stone-500 text-sm" role="status" aria-live="polite">
+        Abrindo a loja…
+      </div>
+    );
+  }
 
   // Se não estiver autenticado, exibe a tela de login integrada
   if (!isAuthenticated) {

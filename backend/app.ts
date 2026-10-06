@@ -1,5 +1,5 @@
 import express, { Request, Response, NextFunction } from 'express';
-import cors, { CorsOptions } from 'cors';
+import cors from 'cors';
 import path from 'path';
 import { plantsRouter } from './routes/plants';
 import { customersRouter } from './routes/customers';
@@ -11,49 +11,51 @@ import { uploadRouter } from './routes/upload';
 import { migrationRouter } from './routes/migration';
 import { authRouter } from './routes/auth';
 import { getDb } from './db';
+import { csrfGuard, isTrustedOrigin, requireSession } from './auth/middleware';
 
 export const app = express();
 
+// Atrás do Nginx (1 proxy): req.ip passa a ser o IP real do cliente (X-Forwarded-For), usado no limite de tentativas de login
+app.set('trust proxy', 1);
+
 const isProd = process.env.NODE_ENV === 'production';
-const rawOrigins = process.env.CORS_ORIGIN?.trim();
 
-// Configuração rigorosa de CORS para produção:
-// Em produção, NÃO utilizar '*' como fallback silencioso.
-// Exige configuração explícita de CORS_ORIGIN na VPS.
-const corsOptions: CorsOptions = {
-  origin: (origin, callback) => {
-    // Permite requisições sem header Origin (same-origin, curl, mobile, server-side)
-    if (!origin) {
-      return callback(null, true);
-    }
-
-    if (rawOrigins && rawOrigins !== '*') {
-      const allowed = rawOrigins.split(',').map((o) => o.trim().toLowerCase());
-      if (allowed.includes(origin.toLowerCase())) {
-        return callback(null, true);
-      }
-      return callback(new Error(`[CORS] Origem não autorizada: ${origin}`));
-    }
-
-    if (isProd) {
-      // Em produção sem CORS_ORIGIN explícito, bloqueia acessos cross-origin não configurados
-      console.warn(`[CORS Aviso]: Tentativa de acesso bloqueada. CORS_ORIGIN não configurado explicitamente na VPS para origem: ${origin}`);
-      return callback(new Error('CORS_ORIGIN deve ser configurado explicitamente no arquivo .env em produção.'));
-    }
-
-    // Modo de desenvolvimento: permissivo para testes locais
-    return callback(null, true);
-  },
+// CORS (a API usa cookie de sessão SameSite=Strict, então cross-site não carrega credenciais):
+//  • sem Origin (curl/servidor) ou mesma origem do site (PWA no mesmo domínio) → liberado;
+//  • origens listadas em CORS_ORIGIN (sem '*') → liberadas;
+//  • desenvolvimento: também localhost/127.0.0.1;
+//  • qualquer outra → NÃO recebe cabeçalhos CORS (o navegador bloqueia a leitura) e métodos mutáveis são barrados pelo
+//    csrfGuard (403). Nunca se reflete uma origem arbitrária.
+const isLocalOrigin = (origin: string) => {
+  try {
+    const h = new URL(origin).hostname;
+    return h === 'localhost' || h === '127.0.0.1' || h === '[::1]' || h === '::1';
+  } catch {
+    return false;
+  }
+};
+const corsBase = {
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
   credentials: true,
 };
-
-app.use(cors(corsOptions));
+app.use(
+  cors((req, callback) => {
+    const origin = req.headers.origin;
+    const allowed = !origin || isTrustedOrigin(req, origin) || (!isProd && isLocalOrigin(origin));
+    if (!allowed && isProd) {
+      console.warn(`[CORS Aviso]: origem não autorizada bloqueada: ${origin}`);
+    }
+    callback(null, { ...corsBase, origin: allowed });
+  })
+);
 
 // Parser de JSON com limite seguro
 app.use(express.json({ limit: '15mb' }));
 app.use(express.urlencoded({ extended: true, limit: '15mb' }));
+
+// CSRF: valida Origin / Sec-Fetch-Site em métodos mutáveis (além de SameSite=Strict no cookie de sessão)
+app.use(csrfGuard);
 
 // Servir arquivos estáticos de uploads de imagens (/uploads/plants/...)
 const uploadsBaseDir = path.resolve(process.env.UPLOADS_DIR || './uploads');
@@ -61,6 +63,10 @@ app.use('/uploads', express.static(uploadsBaseDir, {
   maxAge: '7d',
   immutable: false,
 }));
+
+// Autenticação: TODA rota /api exige sessão válida no servidor, exceto a allowlist de auth/middleware.ts
+// (GET /api/health, POST /api/auth/login, POST /api/auth/logout). /uploads (fotos de plantas) é público.
+app.use('/api', requireSession);
 
 // Health check para monitoramento e validação de inicialização
 app.get('/api/health', async (_req: Request, res: Response) => {

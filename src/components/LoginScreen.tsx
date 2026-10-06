@@ -163,17 +163,6 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
               </button>
             </div>
           </form>
-
-          {/* Lembrete amigável das credenciais iniciais */}
-          <div className="mt-6 pt-5 border-t border-stone-100 text-center">
-            <p className="text-[11px] text-stone-500 font-medium">
-              Chave da Loja para Bernardo:
-            </p>
-            <div className="mt-1.5 inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-stone-100 text-stone-700 text-xs font-mono">
-              <span>Senha inicial:</span>
-              <strong className="text-emerald-900">NovoHiper2026</strong>
-            </div>
-          </div>
         </div>
 
         {/* Botão de Instalar PWA para quem abre a tela inicial */}
