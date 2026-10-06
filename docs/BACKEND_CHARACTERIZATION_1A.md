@@ -23,7 +23,7 @@ Cada teste sobe o **app Express real** numa porta efêmera de `127.0.0.1`, com u
 ## Bugs / riscos descobertos (NÃO corrigidos na 1A)
 | # | Descoberta | Gravidade | Fase sugerida |
 |---|---|---|---|
-| B1 | **Excluir planta referenciada por pedido entregue → HTTP 500** (FK de `order_items`, mensagem genérica). Hipótese da FK **confirmada**. | Média | 1D |
+| B1 ✅ **corrigido na 1D** | **Excluir planta referenciada por pedido entregue → HTTP 500** (FK de `order_items`, mensagem genérica). Hipótese da FK **confirmada**. | Média | 1D |
 | B2 ✅ **corrigido na 1C** | `PUT /api/orders/:id` aceitava `status:"entregue"` **sem** baixar estoque nem creditar caixa; depois o `start` é bloqueado. Pedido "entregue" que nunca virou dinheiro/estoque. | Alta | 1C/1E |
 | B3 | `POST /api/cash/transactions` aceita **crédito livre** sem pedido (dinheiro "do nada"). | Alta | 1E |
 | B4 | Tipo `adjustment` é **subtraído** do saldo (tratado como débito) e não exige saldo. | Média | 1E |
@@ -80,3 +80,7 @@ A regra é avaliada antes da busca do pedido.
 - `finish`: único consumidor = `src/App.tsx` → `api.finishDelivery(del.id)` (resultado ignorado, só `.catch`). Sem mudança no frontend.
 - `PUT /orders/:id`: o frontend só envia `preparando`/`pronto` (`OrdersView` → `handleUpdateOrderStatus`). Sem mudança no frontend.
 - O jogo da Aventura (Phaser) não usa nenhum dos dois endpoints.
+
+## Fase 1D — exclusão lógica de plantas
+Resolve **B1**: `DELETE /api/plants/:id` agora é soft-delete (`plants.deleted_at`, migration 002). Ver
+`docs/PLANTS_SOFT_DELETE.md` (semântica, política de pedidos, auditoria de consultas) e `docs/MIGRATIONS.md` (mecanismo).

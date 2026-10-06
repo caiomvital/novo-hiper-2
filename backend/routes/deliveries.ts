@@ -113,6 +113,7 @@ deliveriesRouter.post('/start', async (req: Request, res: Response) => {
     }
 
     for (const item of items) {
+      // POLÍTICA (1D): pedido criado ANTES da exclusão lógica continua podendo ser iniciado/concluído — NÃO filtra deleted_at.
       const plant = await db.get('SELECT id, name, stock_quantity FROM plants WHERE id = ?', item.plant_id);
       if (!plant) {
         res.status(400).json({ error: `Planta ID ${item.plant_id} não encontrada no viveiro.` });
@@ -285,6 +286,7 @@ deliveriesRouter.post('/:id/finish', async (req: Request, res: Response) => {
 
         // 5. Abater estoque de cada item com validação (qualquer falha desfaz TUDO)
         for (const item of items) {
+          // POLÍTICA (1D): planta excluída logicamente ainda é baixada/creditada aqui se o pedido já existia (histórico consistente).
           const plant = await db.get('SELECT id, name, stock_quantity FROM plants WHERE id = ?', item.plant_id);
           if (!plant) throw new FinishError(`Planta ID ${item.plant_id} não encontrada.`, 400);
           if (plant.stock_quantity < item.quantity) {

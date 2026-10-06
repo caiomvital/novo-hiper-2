@@ -4,6 +4,14 @@ import crypto from 'crypto';
 
 export const plantsRouter = Router();
 
+// ── Exclusão lógica (Fase 1D) ─────────────────────────────────────────────────────────────────────
+// `plants.deleted_at` (INTEGER ms; NULL = ativa). DELETE /api/plants/:id = REMOVER DO CATÁLOGO (soft-delete):
+// a linha nunca é apagada (preserva order_items/caixa/histórico); restaurar no futuro = voltar deleted_at a NULL.
+// Classificação das consultas desta rota:
+//   A) catálogo/estado atual → ignoram plantas excluídas: GET /, GET /stock, GET /:id, GET /:id/stock
+//   C) operação nova → recusam planta excluída: PUT /:id (409 PLANT_DELETED)
+//   DELETE → soft-delete idempotente; continua bloqueado se há pedido NÃO entregue usando a planta.
+
 // GET /api/plants/stock - Consultar estoque geral de todas as plantas
 plantsRouter.get('/stock', async (_req: Request, res: Response) => {
   try {
@@ -11,6 +19,7 @@ plantsRouter.get('/stock', async (_req: Request, res: Response) => {
     const rows = await db.all(`
       SELECT id, name, stock_quantity, price 
       FROM plants 
+      WHERE deleted_at IS NULL
       ORDER BY name ASC
     `);
     const totalUnits = rows.reduce((sum, r) => sum + (r.stock_quantity || 0), 0);
@@ -40,6 +49,7 @@ plantsRouter.get('/', async (_req: Request, res: Response) => {
         created_at, 
         updated_at 
       FROM plants 
+      WHERE deleted_at IS NULL
       ORDER BY created_at DESC
     `);
     res.json(plants);
@@ -54,7 +64,7 @@ plantsRouter.get('/:id/stock', async (req: Request, res: Response) => {
   try {
     const db = await getDb();
     const plant = await db.get(
-      'SELECT id, name, stock_quantity FROM plants WHERE id = ?',
+      'SELECT id, name, stock_quantity FROM plants WHERE id = ? AND deleted_at IS NULL',
       req.params.id
     );
     if (!plant) {
@@ -72,7 +82,7 @@ plantsRouter.get('/:id/stock', async (req: Request, res: Response) => {
 plantsRouter.get('/:id', async (req: Request, res: Response) => {
   try {
     const db = await getDb();
-    const plant = await db.get('SELECT * FROM plants WHERE id = ?', req.params.id);
+    const plant = await db.get('SELECT * FROM plants WHERE id = ? AND deleted_at IS NULL', req.params.id);
     if (!plant) {
       res.status(404).json({ error: 'Planta não encontrada.' });
       return;
@@ -150,6 +160,14 @@ plantsRouter.put('/:id', async (req: Request, res: Response) => {
       res.status(404).json({ error: 'Planta não encontrada.' });
       return;
     }
+    // Planta removida do catálogo: nenhuma edição (preço/estoque/foto) pelos fluxos normais
+    if (existing.deleted_at !== null && existing.deleted_at !== undefined) {
+      res.status(409).json({
+        code: 'PLANT_DELETED',
+        error: 'Esta planta foi removida do catálogo e não pode ser editada.',
+      });
+      return;
+    }
 
     if (!name || typeof name !== 'string' || !name.trim()) {
       res.status(400).json({ error: 'Nome da planta é obrigatório.' });
@@ -194,37 +212,76 @@ plantsRouter.put('/:id', async (req: Request, res: Response) => {
   }
 });
 
-// DELETE /api/plants/:id - Excluir planta
+// DELETE /api/plants/:id - REMOVER planta do catálogo (exclusão LÓGICA, sempre — mesmo sem histórico)
+//  - 1ª remoção → 200 { success: true, deleted: true, alreadyDeleted: false, deletedAt, message }
+//  - repetição  → 200 { success: true, deleted: true, alreadyDeleted: true,  deletedAt }  (idempotente, sem efeito)
+//  - planta usada por pedido NÃO entregue → 400 (regra de segurança mantida); inexistente → 404
+//  - a linha, o estoque e todo o histórico (order_items, caixa) permanecem intactos; restaurar = deleted_at = NULL
 plantsRouter.delete('/:id', async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const db = await getDb();
 
-    // Checar se planta existe
-    const existing = await db.get('SELECT * FROM plants WHERE id = ?', id);
-    if (!existing) {
-      res.status(404).json({ error: 'Planta não encontrada.' });
-      return;
-    }
+    let inTransaction = false;
+    try {
+      // Verificação + marcação na MESMA transação de escrita (sem janela entre checar pedidos e excluir)
+      await db.run('BEGIN IMMEDIATE;');
+      inTransaction = true;
 
-    // Checar se há pedidos não finalizados usando essa planta
-    const activeOrderWithPlant = await db.get(`
-      SELECT o.id, o.status 
-      FROM orders o
-      JOIN order_items oi ON oi.order_id = o.id
-      WHERE oi.plant_id = ? AND o.status != 'entregue'
-      LIMIT 1
-    `, id);
+      const existing = await db.get('SELECT id, deleted_at FROM plants WHERE id = ?', id);
+      if (!existing) {
+        await db.run('ROLLBACK;');
+        inTransaction = false;
+        res.status(404).json({ error: 'Planta não encontrada.' });
+        return;
+      }
 
-    if (activeOrderWithPlant) {
-      res.status(400).json({ 
-        error: 'Esta planta não pode ser excluída pois possui pedidos em andamento.' 
+      // Já removida: sucesso idempotente, nenhuma escrita
+      if (existing.deleted_at !== null && existing.deleted_at !== undefined) {
+        await db.run('COMMIT;');
+        inTransaction = false;
+        res.json({ success: true, deleted: true, alreadyDeleted: true, deletedAt: existing.deleted_at });
+        return;
+      }
+
+      // Pedidos não finalizados dependem desta planta → não remover (evita entrega aberta apontando para produto removido)
+      const activeOrderWithPlant = await db.get(`
+        SELECT o.id, o.status 
+        FROM orders o
+        JOIN order_items oi ON oi.order_id = o.id
+        WHERE oi.plant_id = ? AND o.status != 'entregue'
+        LIMIT 1
+      `, id);
+      if (activeOrderWithPlant) {
+        await db.run('ROLLBACK;');
+        inTransaction = false;
+        res.status(400).json({
+          error: 'Esta planta não pode ser excluída pois possui pedidos em andamento.'
+        });
+        return;
+      }
+
+      const now = Date.now();
+      await db.run('UPDATE plants SET deleted_at = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL', [now, now, id]);
+      await db.run('COMMIT;');
+      inTransaction = false;
+      res.json({
+        success: true,
+        deleted: true,
+        alreadyDeleted: false,
+        deletedAt: now,
+        message: 'Planta removida do catálogo. O histórico de pedidos e vendas foi preservado.',
       });
-      return;
+    } catch (err) {
+      if (inTransaction) {
+        try {
+          await db.run('ROLLBACK;');
+        } catch {
+          /* já encerrada */
+        }
+      }
+      throw err;
     }
-
-    await db.run('DELETE FROM plants WHERE id = ?', id);
-    res.json({ success: true, message: 'Planta excluída com sucesso.' });
   } catch (error) {
     console.error('Erro ao excluir planta:', error);
     res.status(500).json({ error: 'Erro ao excluir planta.' });

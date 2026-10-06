@@ -191,9 +191,14 @@ ordersRouter.post('/', async (req: Request, res: Response) => {
     let calculatedTotal = 0;
 
     for (const item of items) {
-      const plant = await db.get('SELECT id, name, price, stock_quantity FROM plants WHERE id = ?', item.plant_id);
+      const plant = await db.get('SELECT id, name, price, stock_quantity, deleted_at FROM plants WHERE id = ?', item.plant_id);
       if (!plant) {
         res.status(400).json({ error: `Planta com ID "${item.plant_id}" não encontrada no catálogo.` });
+        return;
+      }
+      // Operação NOVA: planta removida do catálogo não pode entrar em pedido (os pedidos antigos seguem íntegros)
+      if (plant.deleted_at !== null && plant.deleted_at !== undefined) {
+        res.status(400).json({ code: 'PLANT_DELETED', error: `A planta "${plant.name}" foi removida do catálogo e não pode ser pedida.` });
         return;
       }
 

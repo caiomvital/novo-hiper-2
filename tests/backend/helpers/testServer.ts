@@ -33,7 +33,12 @@ const MANAGED_ENV = ['DATA_DIR', 'DATABASE_PATH', 'UPLOADS_DIR', 'NODE_ENV', 'CO
  * Sobe o app Express REAL do backend (sem mocks) numa porta efêmera de 127.0.0.1, apontando
  * para um banco SQLite recém-criado em diretório temporário. Cada chamada = banco novo, isolado.
  */
-export async function startTestServer(): Promise<TestServer> {
+export interface StartOptions {
+  /** Cria um banco PRÉ-EXISTENTE (ex.: schema antigo, sem migrations) antes de o backend abrir o arquivo. */
+  seed?: (dbPath: string) => void;
+}
+
+export async function startTestServer(options: StartOptions = {}): Promise<TestServer> {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), TEST_DIR_PREFIX));
   const dbPath = path.join(dir, 'test.db');
   // Proteção explícita ANTES de qualquer abertura de banco
@@ -46,6 +51,8 @@ export async function startTestServer(): Promise<TestServer> {
   process.env.UPLOADS_DIR = path.join(dir, 'uploads');
   process.env.NODE_ENV = 'test';
   delete process.env.CORS_ORIGIN;
+
+  options.seed?.(dbPath);
 
   // O backend guarda o banco em um singleton de módulo: recarrega os módulos para ter um banco novo.
   vi.resetModules();

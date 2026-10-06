@@ -42,6 +42,7 @@ function saveBase64Image(dataUrl: string, fallbackName: string): string {
 migrationRouter.get('/status', async (_req: Request, res: Response) => {
   try {
     const db = await getDb();
+    // Conta TODAS as linhas (inclui plantas removidas logicamente): mede a população do banco, não o catálogo ativo.
     const plantsCount = await db.get('SELECT COUNT(*) as count FROM plants');
     const customersCount = await db.get('SELECT COUNT(*) as count FROM customers');
     const ordersCount = await db.get('SELECT COUNT(*) as count FROM orders');
