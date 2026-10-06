@@ -110,16 +110,120 @@ describe('pedidos — comportamento ATUAL', () => {
     expect((await s.put('/api/orders/nao_existe', { status: 'pronto' })).status).toBe(404);
   });
 
-  it('🐞 BUG DOCUMENTADO: PUT /orders/:id aceita status "entregue" sem baixar estoque nem creditar caixa', async () => {
+  it('PUT /orders/:id com status "entregue" é REJEITADO (400 USE_FINISH_ENDPOINT): sem estoque, sem caixa, pedido intacto', async () => {
     const a = await createPlant(s, { stock_quantity: 5 });
     const o = await createOrder(s, [{ plant_id: a.id, quantity: 2 }]);
+    const before = await s.db.get('SELECT * FROM orders WHERE id = ?', o.id);
+
     const res = await s.put(`/api/orders/${o.id}`, { status: 'entregue' });
-    expect(res.status).toBe(200);
-    expect(res.body.status).toBe('entregue');
-    expect(await stockOf(s, a.id)).toBe(5); // estoque intacto
-    expect(await cashRows(s)).toHaveLength(0); // caixa intacto
-    // e a entrega posterior é bloqueada ("já foi entregue"), então o pedido nunca vira dinheiro/estoque
-    const start = await s.post('/api/deliveries/start', { order_id: o.id });
-    expect(start.status).toBe(400);
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('USE_FINISH_ENDPOINT');
+    expect(res.body.error).toMatch(/\/deliveries\/:id\/finish/);
+
+    expect(await s.db.get('SELECT * FROM orders WHERE id = ?', o.id)).toEqual(before); // nem updated_at mudou
+    expect(await stockOf(s, a.id)).toBe(5);
+    expect(await cashRows(s)).toHaveLength(0);
+    expect((await s.get(`/api/orders/${o.id}`)).body.status).toBe('recebido');
+  });
+
+  it('PUT entregue rejeitado também com entrega em andamento — e o fluxo oficial segue funcionando', async () => {
+    const a = await createPlant(s, { stock_quantity: 5, price: 10 });
+    const o = await createOrder(s, [{ plant_id: a.id, quantity: 2 }]);
+    const d = await s.post('/api/deliveries/start', { order_id: o.id });
+    expect(d.status).toBe(201);
+
+    expect((await s.put(`/api/orders/${o.id}`, { status: 'entregue' })).status).toBe(400);
+    expect((await s.get(`/api/orders/${o.id}`)).body.status).toBe('pronto');
+    expect(await stockOf(s, a.id)).toBe(5);
+    expect(await cashRows(s)).toHaveLength(0);
+
+    // o único caminho para "entregue" continua válido e consistente
+    const fin = await s.post(`/api/deliveries/${d.body.id}/finish`);
+    expect(fin.status).toBe(200);
+    expect(fin.body.order.status).toBe('entregue');
+    expect(await stockOf(s, a.id)).toBe(3);
+    expect(await cashRows(s)).toHaveLength(1);
+  });
+
+  it('PUT entregue é rejeitado mesmo para pedido inexistente (a regra vem antes da busca) e com status inválido continua 400', async () => {
+    expect((await s.put('/api/orders/nao_existe', { status: 'entregue' })).status).toBe(400);
+    const a = await createPlant(s);
+    const o = await createOrder(s, [{ plant_id: a.id }]);
+    const bad = await s.put(`/api/orders/${o.id}`, { status: 'voando' });
+    expect(bad.status).toBe(400);
+    expect(bad.body.error).not.toMatch(/entregue/); // "valores aceitos" não oferece mais 'entregue'
+  });
+
+  it('as atualizações legítimas do PUT continuam permitidas (recebido/preparando/pronto)', async () => {
+    const a = await createPlant(s);
+    const o = await createOrder(s, [{ plant_id: a.id }]);
+    for (const st of ['preparando', 'pronto', 'recebido']) {
+      const r = await s.put(`/api/orders/${o.id}`, { status: st });
+      expect(r.status).toBe(200);
+      expect(r.body.status).toBe(st);
+    }
+  });
+
+  describe('"entregue" é TERMINAL (B11 fechado na 1C)', () => {
+    async function deliveredOrder() {
+      const a = await createPlant(s, { stock_quantity: 5, price: 10 });
+      const o = await createOrder(s, [{ plant_id: a.id, quantity: 2 }]);
+      const d = await s.post('/api/deliveries/start', { order_id: o.id });
+      expect((await s.post(`/api/deliveries/${d.body.id}/finish`)).status).toBe(200);
+      return { plant: a, order: o, deliveryId: d.body.id as string };
+    }
+    const dump = async (orderId: string, deliveryId: string, plantId: string) => ({
+      order: await s.db.get('SELECT * FROM orders WHERE id = ?', orderId),
+      delivery: await s.db.get('SELECT * FROM deliveries WHERE id = ?', deliveryId),
+      plant: await s.db.get('SELECT * FROM plants WHERE id = ?', plantId),
+      cash: await cashRows(s),
+      items: await s.db.all('SELECT * FROM order_items WHERE order_id = ?', orderId),
+    });
+
+    it.each(['recebido', 'preparando', 'pronto'])('entregue → %s é rejeitado (409 ORDER_ALREADY_DELIVERED) sem alterar nada', async (target) => {
+      const { plant, order, deliveryId } = await deliveredOrder();
+      const before = await dump(order.id, deliveryId, plant.id);
+
+      const res = await s.put(`/api/orders/${order.id}`, { status: target });
+      expect(res.status).toBe(409);
+      expect(res.body.code).toBe('ORDER_ALREADY_DELIVERED');
+      expect(res.body.error).toMatch(/estado final/);
+
+      // pedido, entrega, estoque, caixa e itens IDÊNTICOS (updated_at inclusive)
+      expect(await dump(order.id, deliveryId, plant.id)).toEqual(before);
+      expect(before.order.status).toBe('entregue');
+      expect(before.plant.stock_quantity).toBe(3);
+      expect(before.cash).toHaveLength(1);
+      expect((await s.get(`/api/orders/${order.id}`)).body.status).toBe('entregue');
+    });
+
+    it('várias tentativas de reabrir seguidas continuam sem efeito; "entregue → entregue" também é rejeitado', async () => {
+      const { plant, order, deliveryId } = await deliveredOrder();
+      const before = await dump(order.id, deliveryId, plant.id);
+      for (const st of ['recebido', 'preparando', 'pronto', 'recebido']) {
+        expect((await s.put(`/api/orders/${order.id}`, { status: st })).status).toBe(409);
+      }
+      const same = await s.put(`/api/orders/${order.id}`, { status: 'entregue' });
+      expect(same.status).toBe(400);
+      expect(same.body.code).toBe('USE_FINISH_ENDPOINT');
+      expect(await dump(order.id, deliveryId, plant.id)).toEqual(before);
+    });
+
+    it('o finish repetido continua idempotente depois das tentativas de reabrir (estoque/caixa uma vez só)', async () => {
+      const { plant, order, deliveryId } = await deliveredOrder();
+      await s.put(`/api/orders/${order.id}`, { status: 'recebido' });
+      const again = await s.post(`/api/deliveries/${deliveryId}/finish`);
+      expect(again.status).toBe(200);
+      expect(again.body.alreadyApplied).toBe(true);
+      expect(again.body.order.status).toBe('entregue');
+      expect(await stockOf(s, plant.id)).toBe(3);
+      expect(await cashRows(s)).toHaveLength(1);
+    });
+
+    it('status inválido ou pedido inexistente mantêm 400/404 (a regra terminal só vale para pedido entregue)', async () => {
+      const { order } = await deliveredOrder();
+      expect((await s.put(`/api/orders/${order.id}`, { status: 'voando' })).status).toBe(400);
+      expect((await s.put('/api/orders/nao_existe', { status: 'pronto' })).status).toBe(404);
+    });
   });
 });

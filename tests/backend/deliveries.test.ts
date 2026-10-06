@@ -72,7 +72,7 @@ describe('POST /deliveries/:id/finish — comportamento ATUAL', () => {
     const { plant, order, delivery } = await scenario(5, 2, 10);
     const res = await s.post(`/api/deliveries/${delivery.id}/finish`);
     expect(res.status).toBe(200);
-    expect(res.body).toMatchObject({ success: true, cashBalance: 20, totalSales: 20 });
+    expect(res.body).toMatchObject({ success: true, alreadyApplied: false, cashBalance: 20, totalSales: 20 });
     expect(res.body.delivery.status).toBe('entregue');
     expect(res.body.delivery.finished_at).toBeTypeOf('number');
     expect(res.body.order.status).toBe('entregue');
@@ -99,27 +99,103 @@ describe('POST /deliveries/:id/finish — comportamento ATUAL', () => {
     expect((await s.post('/api/deliveries/nao_existe/finish')).status).toBe(404);
   });
 
-  it('📌 COMPORTAMENTO ATUAL (a mudar na 1C): finish REPETIDO devolve 400 e NÃO altera estoque/caixa', async () => {
-    const { plant, delivery } = await scenario(5, 2, 10);
-    expect((await s.post(`/api/deliveries/${delivery.id}/finish`)).status).toBe(200);
-    for (let i = 0; i < 3; i++) {
-      const again = await s.post(`/api/deliveries/${delivery.id}/finish`);
-      expect(again.status).toBe(400); // hoje NÃO é idempotente (D4 exige 200 — será a 1C)
-      expect(again.body.error).toMatch(/já foi finalizada/);
-    }
-    expect(await stockOf(s, plant.id)).toBe(3); // baixou uma vez só
-    expect(await cashRows(s)).toHaveLength(1); // creditou uma vez só
+  it('contrato da resposta: apenas success, alreadyApplied, delivery, order, cashBalance, totalSales (sem campos da Fase 2)', async () => {
+    const { delivery } = await scenario();
+    const res = await s.post(`/api/deliveries/${delivery.id}/finish`);
+    expect(Object.keys(res.body).sort()).toEqual(['alreadyApplied', 'cashBalance', 'delivery', 'order', 'success', 'totalSales']);
   });
 
-  it('dois finish SIMULTÂNEOS: exatamente um aplica (1×200, 1×400); estoque e caixa uma vez só', async () => {
-    const { plant, delivery } = await scenario(5, 2, 10);
+  it('IDEMPOTÊNCIA — 2ª finalização: 200 + alreadyApplied=true, mesmo estado final, SEM nenhum efeito', async () => {
+    const { plant, order, delivery } = await scenario(5, 2, 10);
+    const first = await s.post(`/api/deliveries/${delivery.id}/finish`);
+    expect(first.status).toBe(200);
+    expect(first.body.alreadyApplied).toBe(false);
+
+    const snapshot = async () => ({
+      plant: await s.db.get('SELECT * FROM plants WHERE id = ?', plant.id),
+      order: await s.db.get('SELECT * FROM orders WHERE id = ?', order.id),
+      delivery: await s.db.get('SELECT * FROM deliveries WHERE id = ?', delivery.id),
+      cash: await cashRows(s),
+      items: await s.db.all('SELECT * FROM order_items WHERE order_id = ?', order.id),
+    });
+    const before = await snapshot();
+
+    const second = await s.post(`/api/deliveries/${delivery.id}/finish`);
+    expect(second.status).toBe(200);
+    expect(second.body).toMatchObject({ success: true, alreadyApplied: true });
+    // representa a entrega/pedido já finalizados (inclusive o carimbo original)
+    expect(second.body.delivery).toEqual(first.body.delivery);
+    expect(second.body.order).toEqual(first.body.order);
+    expect(second.body.order.status).toBe('entregue');
+    expect(second.body.delivery.finished_at).toBe(first.body.delivery.finished_at);
+    expect(second.body).toMatchObject({ cashBalance: 20, totalSales: 20 });
+
+    // NENHUM efeito colateral: tabelas idênticas linha a linha (updated_at inclusive)
+    expect(await snapshot()).toEqual(before);
+    expect(await stockOf(s, plant.id)).toBe(3);
+  });
+
+  it('IDEMPOTÊNCIA — várias repetições sequenciais: sempre 200/alreadyApplied=true; estoque e caixa uma vez só', async () => {
+    const { plant, order, delivery } = await scenario(5, 2, 10);
+    expect((await s.post(`/api/deliveries/${delivery.id}/finish`)).body.alreadyApplied).toBe(false);
+    for (let i = 0; i < 10; i++) {
+      const again = await s.post(`/api/deliveries/${delivery.id}/finish`);
+      expect(again.status).toBe(200);
+      expect(again.body.alreadyApplied).toBe(true);
+    }
+    expect(await stockOf(s, plant.id)).toBe(3);
+    const cash = await cashRows(s);
+    expect(cash).toHaveLength(1);
+    expect(cash.filter((c: any) => c.order_id === order.id)).toHaveLength(1);
+  });
+
+  it('a repetição não exige que o caixa global seja igual: outras operações legítimas entre as chamadas são aceitas', async () => {
+    const { delivery } = await scenario(5, 2, 10);
+    await s.post(`/api/deliveries/${delivery.id}/finish`);
+    await s.post('/api/cash/transactions', { amount: 5, type: 'debit', description: 'outra operação legítima' });
+    const again = await s.post(`/api/deliveries/${delivery.id}/finish`);
+    expect(again.status).toBe(200);
+    expect(again.body.alreadyApplied).toBe(true);
+    expect(again.body.cashBalance).toBe(15); // saldo ATUAL
+    expect(again.body.totalSales).toBe(20);
+    expect(await cashRows(s)).toHaveLength(2); // o crédito do pedido + o débito, nenhum crédito extra
+  });
+
+  it('CONCORRÊNCIA: dois finish simultâneos → ambos 200; exatamente um alreadyApplied=false e um true; efeitos uma vez só', async () => {
+    const { plant, order, delivery } = await scenario(5, 2, 10);
     const [r1, r2] = await Promise.all([
       s.post(`/api/deliveries/${delivery.id}/finish`),
       s.post(`/api/deliveries/${delivery.id}/finish`),
     ]);
-    expect([r1.status, r2.status].sort()).toEqual([200, 400]);
+    expect([r1.status, r2.status]).toEqual([200, 200]);
+    expect([r1.body.alreadyApplied, r2.body.alreadyApplied].sort()).toEqual([false, true]);
+    expect(await stockOf(s, plant.id)).toBe(3);
+    const cash = await cashRows(s);
+    expect(cash).toHaveLength(1);
+    expect(cash.filter((c: any) => c.order_id === order.id)).toHaveLength(1);
+  });
+
+  it('CONCORRÊNCIA: 8 finish simultâneos → todos 200, um único alreadyApplied=false', async () => {
+    const { plant, delivery } = await scenario(5, 2, 10);
+    const results = await Promise.all(Array.from({ length: 8 }, () => s.post(`/api/deliveries/${delivery.id}/finish`)));
+    expect(results.every((r) => r.status === 200)).toBe(true);
+    expect(results.filter((r) => r.body.alreadyApplied === false)).toHaveLength(1);
+    expect(results.filter((r) => r.body.alreadyApplied === true)).toHaveLength(7);
     expect(await stockOf(s, plant.id)).toBe(3);
     expect(await cashRows(s)).toHaveLength(1);
+  });
+
+  it('a decisão vem do estado PERSISTIDO (sem flag em memória): entrega já "entregue" no banco → alreadyApplied=true sem efeitos', async () => {
+    const { plant, order, delivery } = await scenario(5, 2, 10);
+    // estado criado "por fora" (como se outro processo/instância já tivesse finalizado): nenhuma chamada prévia ao /finish
+    await s.db.run("UPDATE deliveries SET status = 'entregue', finished_at = 123, updated_at = 123 WHERE id = ?", delivery.id);
+    const res = await s.post(`/api/deliveries/${delivery.id}/finish`);
+    expect(res.status).toBe(200);
+    expect(res.body.alreadyApplied).toBe(true);
+    expect(res.body.delivery.finished_at).toBe(123);
+    expect(await stockOf(s, plant.id)).toBe(5); // nada foi baixado
+    expect(await cashRows(s)).toHaveLength(0); // nada foi creditado
+    expect((await s.db.get('SELECT status FROM orders WHERE id = ?', order.id)).status).toBe('pronto'); // pedido não foi tocado
   });
 
   it('ROLLBACK: falta de estoque no 2º item desfaz a baixa do 1º; entrega e pedido NÃO mudam; sem caixa', async () => {
@@ -139,6 +215,16 @@ describe('POST /deliveries/:id/finish — comportamento ATUAL', () => {
     expect((await s.get(`/api/deliveries/${d.id}`)).body.status).toBe('iniciada');
     expect((await s.get(`/api/orders/${o.id}`)).body.status).toBe('pronto');
     expect(await cashRows(s)).toHaveLength(0);
+    expect(res.body.alreadyApplied).toBeUndefined(); // falha real NUNCA vira alreadyApplied
+
+    // e não "memoriza" a falha: corrigida a causa, a MESMA entrega finaliza normalmente (alreadyApplied=false)
+    await s.put(`/api/plants/${b.id}`, { name: 'B', price: 10, stock_quantity: 3 });
+    const retry = await s.post(`/api/deliveries/${d.id}/finish`);
+    expect(retry.status).toBe(200);
+    expect(retry.body.alreadyApplied).toBe(false);
+    expect(await stockOf(s, a.id)).toBe(3);
+    expect(await stockOf(s, b.id)).toBe(0);
+    expect(await cashRows(s)).toHaveLength(1);
   });
 
   it('ROLLBACK (falha injetada no caixa): se o INSERT do caixa falha, nada do finish persiste', async () => {
@@ -155,6 +241,15 @@ describe('POST /deliveries/:id/finish — comportamento ATUAL', () => {
     expect((await s.get(`/api/deliveries/${delivery.id}`)).body.status).toBe('iniciada');
     expect((await s.get(`/api/orders/${order.id}`)).body.status).toBe('pronto');
     expect(await cashRows(s)).toHaveLength(0);
+    expect(res.body.alreadyApplied).toBeUndefined();
+
+    // removida a sabotagem, a mesma entrega finaliza e aplica (não ficou marcada como aplicada)
+    await s.db.run('DROP TRIGGER trg_test_bloqueia_caixa');
+    const retry = await s.post(`/api/deliveries/${delivery.id}/finish`);
+    expect(retry.status).toBe(200);
+    expect(retry.body.alreadyApplied).toBe(false);
+    expect(await stockOf(s, plant.id)).toBe(3);
+    expect(await cashRows(s)).toHaveLength(1);
   });
 
   it('CARACTERIZAÇÃO: sem estoque no finish o erro é 400 (não 409) com mensagem de estoque', async () => {

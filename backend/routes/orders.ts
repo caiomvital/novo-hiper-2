@@ -316,7 +316,18 @@ ordersRouter.put('/:id', async (req: Request, res: Response) => {
     const { status } = req.body;
     const { id } = req.params;
 
-    const validStatuses = ['recebido', 'preparando', 'pronto', 'entregue'];
+    // 'entregue' NUNCA pode ser definido por aqui: a finalização (baixa de estoque + crédito no caixa +
+    // marcação de pedido/entrega) é atômica e exclusiva de POST /api/deliveries/:id/finish.
+    // 400 (mesmo critério de PATCH /deliveries/:id/state) com `code` legível por máquina.
+    if (status === 'entregue') {
+      res.status(400).json({
+        code: 'USE_FINISH_ENDPOINT',
+        error: 'O status "entregue" só pode ser definido finalizando a entrega: POST /api/deliveries/:id/finish.',
+      });
+      return;
+    }
+
+    const validStatuses = ['recebido', 'preparando', 'pronto'];
     if (!status || !validStatuses.includes(status)) {
       res.status(400).json({ 
         error: `Status inválido. Valores aceitos: ${validStatuses.join(', ')}` 
@@ -328,6 +339,16 @@ ordersRouter.put('/:id', async (req: Request, res: Response) => {
     const existing = await db.get('SELECT * FROM orders WHERE id = ?', id);
     if (!existing) {
       res.status(404).json({ error: 'Pedido não encontrado.' });
+      return;
+    }
+
+    // 'entregue' é TERMINAL: depois de finalizado por POST /deliveries/:id/finish (estoque baixado e caixa
+    // creditado) o pedido não pode ser reaberto. 409 (conflito com o estado atual) + código explícito.
+    if (existing.status === 'entregue') {
+      res.status(409).json({
+        code: 'ORDER_ALREADY_DELIVERED',
+        error: 'Este pedido já foi entregue; "entregue" é um estado final e o pedido não pode ser reaberto.',
+      });
       return;
     }
 

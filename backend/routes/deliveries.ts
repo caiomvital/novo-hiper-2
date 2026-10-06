@@ -222,106 +222,119 @@ deliveriesRouter.patch('/:id/state', async (req: Request, res: Response) => {
   }
 });
 
-// POST /api/deliveries/:id/finish - Finalizar entrega com validação crítica no backend
-// 1. Impede dupla finalização
-// 2. Valida pedido, itens e abate estoque no banco
-// 3. Registra pagamento no caixa atomicamente apenas uma vez
+// POST /api/deliveries/:id/finish - Finalizar entrega (IDEMPOTENTE) com validação crítica no backend
+//
+// CONTRATO (Fase 1C):
+//  - 1ª finalização válida → 200 { success: true, alreadyApplied: false, delivery, order, cashBalance, totalSales }
+//      * baixa o estoque exatamente uma vez; credita o caixa exatamente uma vez;
+//      * marca a entrega e o pedido como 'entregue'.
+//  - Repetições (a entrega já está 'entregue') → 200 { …, alreadyApplied: true } SEM nenhum efeito:
+//      * não baixa estoque, não cria transação de caixa, não altera pedido/entrega (updated_at inclusive).
+//    `cashBalance`/`totalSales` refletem o caixa ATUAL (podem diferir da 1ª resposta se houve outras operações).
+//  - Falhas reais (estoque insuficiente, planta removida, falha ao gravar o caixa) → 400 e ROLLBACK total;
+//    nunca viram alreadyApplied=true e a entrega continua finalizável depois de corrigida a causa.
+//  - Entrega inexistente → 404.
+//
+// COMO É IDEMPOTENTE: a decisão "já aplicado?" lê o estado PERSISTIDO (deliveries.status) DENTRO de uma
+// transação de escrita (BEGIN IMMEDIATE) — não há flag em memória. Como rede de segurança adicional o banco
+// mantém UNIQUE(deliveries.order_id) e UNIQUE(cash_transactions.order_id).
+class FinishError extends Error {
+  constructor(message: string, public status: number) {
+    super(message);
+  }
+}
+
 deliveriesRouter.post('/:id/finish', async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const db = await getDb();
 
-    // 1. Buscar e verificar entrega
-    const delivery = await db.get('SELECT * FROM deliveries WHERE id = ?', id);
-    if (!delivery) {
+    // 1. Verificar existência (404 antes de abrir qualquer transação)
+    const exists = await db.get('SELECT id FROM deliveries WHERE id = ?', id);
+    if (!exists) {
       res.status(404).json({ error: 'Entrega não encontrada.' });
       return;
     }
 
-    // REGRA CRÍTICA: Impedir que uma mesma entrega seja finalizada duas vezes
-    if (delivery.status === 'entregue') {
-      res.status(400).json({ error: 'Esta entrega já foi finalizada anteriormente e seu pagamento já foi processado.' });
-      return;
-    }
+    let alreadyApplied = false;
+    let orderId = '';
+    let inTransaction = false;
 
-    // 2. Buscar pedido real no banco de dados (não confiar em dados do cliente)
-    const order = await db.get('SELECT * FROM orders WHERE id = ?', delivery.order_id);
-    if (!order) {
-      res.status(404).json({ error: 'Pedido associado à entrega não foi encontrado.' });
-      return;
-    }
-
-    // 3. Buscar itens do pedido e verificar estoque
-    const items = await db.all('SELECT * FROM order_items WHERE order_id = ?', order.id);
-    if (items.length === 0) {
-      res.status(400).json({ error: 'Pedido não possui itens para entrega.' });
-      return;
-    }
-
-    // 4. Iniciar transação atômica
-    await db.run('BEGIN TRANSACTION;');
     try {
-      // Abater estoque de cada item com validação
-      for (const item of items) {
-        const plant = await db.get('SELECT id, name, stock_quantity FROM plants WHERE id = ?', item.plant_id);
-        if (!plant) {
-          throw new Error(`Planta ID ${item.plant_id} não encontrada.`);
+      // 2. Transação de escrita: o estado da entrega é (re)lido AQUI DENTRO — fonte de verdade persistente
+      await db.run('BEGIN IMMEDIATE;');
+      inTransaction = true;
+
+      const delivery = await db.get('SELECT * FROM deliveries WHERE id = ?', id);
+      if (!delivery) throw new FinishError('Entrega não encontrada.', 404);
+      orderId = delivery.order_id;
+
+      if (delivery.status === 'entregue') {
+        // Já finalizada: nenhum efeito colateral (nenhuma escrita), só devolve o estado final.
+        alreadyApplied = true;
+        await db.run('COMMIT;');
+        inTransaction = false;
+      } else {
+        // 3. Buscar pedido real no banco de dados (não confiar em dados do cliente)
+        const order = await db.get('SELECT * FROM orders WHERE id = ?', delivery.order_id);
+        if (!order) throw new FinishError('Pedido associado à entrega não foi encontrado.', 404);
+
+        // 4. Itens do pedido
+        const items = await db.all('SELECT * FROM order_items WHERE order_id = ?', order.id);
+        if (items.length === 0) throw new FinishError('Pedido não possui itens para entrega.', 400);
+
+        // 5. Abater estoque de cada item com validação (qualquer falha desfaz TUDO)
+        for (const item of items) {
+          const plant = await db.get('SELECT id, name, stock_quantity FROM plants WHERE id = ?', item.plant_id);
+          if (!plant) throw new FinishError(`Planta ID ${item.plant_id} não encontrada.`, 400);
+          if (plant.stock_quantity < item.quantity) {
+            throw new FinishError(`Estoque insuficiente da planta "${plant.name}". Estoque atual: ${plant.stock_quantity}.`, 400);
+          }
+          await db.run('UPDATE plants SET stock_quantity = ?, updated_at = ? WHERE id = ?', [
+            plant.stock_quantity - item.quantity,
+            Date.now(),
+            plant.id,
+          ]);
         }
-        if (plant.stock_quantity < item.quantity) {
-          throw new Error(`Estoque insuficiente da planta "${plant.name}". Estoque atual: ${plant.stock_quantity}.`);
+
+        const now = Date.now();
+        await db.run(
+          `UPDATE deliveries SET status = 'entregue', finished_at = ?, updated_at = ? WHERE id = ?`,
+          [now, now, delivery.id]
+        );
+        await db.run(`UPDATE orders SET status = 'entregue', updated_at = ? WHERE id = ?`, [now, order.id]);
+
+        // REGRA CRÍTICA: pagamento no caixa apenas uma vez (também garantido por UNIQUE(order_id))
+        const existingTx = await db.get('SELECT id FROM cash_transactions WHERE order_id = ?', order.id);
+        if (!existingTx) {
+          const txId = `tx_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
+          await db.run(
+            `INSERT INTO cash_transactions (id, order_id, delivery_id, amount, type, description, created_at)
+             VALUES (?, ?, ?, ?, 'credit', ?, ?)`,
+            [txId, order.id, delivery.id, order.total, `Pagamento da Entrega Pedido #${order.order_number || order.id}`, now]
+          );
         }
 
-        const newStock = plant.stock_quantity - item.quantity;
-        await db.run('UPDATE plants SET stock_quantity = ?, updated_at = ? WHERE id = ?', [
-          newStock,
-          Date.now(),
-          plant.id,
-        ]);
+        await db.run('COMMIT;');
+        inTransaction = false;
       }
-
-      const now = Date.now();
-
-      // Atualizar status da entrega para 'entregue'
-      await db.run(`
-        UPDATE deliveries 
-        SET status = 'entregue', finished_at = ?, updated_at = ?
-        WHERE id = ?
-      `, [now, now, delivery.id]);
-
-      // Atualizar status do pedido para 'entregue'
-      await db.run(`
-        UPDATE orders 
-        SET status = 'entregue', updated_at = ?
-        WHERE id = ?
-      `, [now, order.id]);
-
-      // REGRA CRÍTICA: Registrar pagamento no caixa apenas uma vez
-      const existingTx = await db.get('SELECT id FROM cash_transactions WHERE order_id = ?', order.id);
-      if (!existingTx) {
-        const txId = `tx_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
-        await db.run(`
-          INSERT INTO cash_transactions (id, order_id, delivery_id, amount, type, description, created_at)
-          VALUES (?, ?, ?, ?, 'credit', ?, ?)
-        `, [
-          txId,
-          order.id,
-          delivery.id,
-          order.total,
-          `Pagamento da Entrega Pedido #${order.order_number || order.id}`,
-          now,
-        ]);
-      }
-
-      await db.run('COMMIT;');
     } catch (err: any) {
-      await db.run('ROLLBACK;');
-      res.status(400).json({ error: err.message || 'Falha na validação crítica da entrega.' });
+      if (inTransaction) {
+        // só desfaz a transação que ESTE pedido abriu
+        try {
+          await db.run('ROLLBACK;');
+        } catch {
+          /* transação já encerrada */
+        }
+      }
+      const status = err instanceof FinishError ? err.status : 400;
+      res.status(status).json({ error: err.message || 'Falha na validação crítica da entrega.' });
       return;
     }
 
-    // Retornar resultado consolidado
+    // 6. Estado final (lido do banco)
     const finishedDelivery = await db.get('SELECT * FROM deliveries WHERE id = ?', id);
-    const updatedOrder = await db.get('SELECT * FROM orders WHERE id = ?', order.id);
+    const updatedOrder = await db.get('SELECT * FROM orders WHERE id = ?', orderId);
     const cashTotal = await db.get(`
       SELECT 
         COALESCE(SUM(CASE WHEN type = 'credit' THEN amount ELSE -amount END), 0) AS balance,
@@ -331,6 +344,7 @@ deliveriesRouter.post('/:id/finish', async (req: Request, res: Response) => {
 
     res.json({
       success: true,
+      alreadyApplied,
       delivery: finishedDelivery,
       order: updatedOrder,
       cashBalance: cashTotal.balance,
