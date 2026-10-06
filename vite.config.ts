@@ -122,6 +122,10 @@ export default defineConfig(() => {
       hmr: process.env.DISABLE_HMR !== 'true',
       // Disable file watching when DISABLE_HMR is true to save CPU during agent edits.
       watch: process.env.DISABLE_HMR === 'true' ? null : {},
+      // Somente dev: encaminha /api ao backend local isolado quando DEV_API_TARGET estiver definido.
+      proxy: process.env.DEV_API_TARGET
+        ? { '/api': { target: process.env.DEV_API_TARGET, changeOrigin: false } }
+        : undefined,
     },
   };
 });

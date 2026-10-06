@@ -36,3 +36,15 @@ uploads/*
 # Temp files
 tmp/
 temp/
+
+# Testes
+test-results/
+playwright-report/
+data-dev/
+uploads-dev/
+*.zip
+screenshots/
+*.png.tmp
+*.pid
+*.cid
+.claude/
