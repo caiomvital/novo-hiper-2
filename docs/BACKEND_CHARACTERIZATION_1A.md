@@ -33,3 +33,9 @@ Cada teste sobe o **app Express real** numa porta efêmera de `127.0.0.1`, com u
 | B8 | `quantity` 0/inválida vira 1 silenciosamente (`parseInt(...) \|\| 1`); estoque decimal é truncado. | Baixa | futura |
 | B9 | Caixa em `REAL`: `0.1 + 0.2` armazenado como `0.30000000000000004` (exibição arredonda). | Baixa/Média | D8 (centavos nas novas tabelas) |
 | B10 | Sem autenticação em nenhuma rota (já conhecido, G1). Não testado aqui (1E). | Crítica | 1E |
+
+## Encaminhamento dos achados (decidido após a 1A)
+- **B2** → Fase **1C** (o `PUT /orders/:id` não poderá marcar `entregue`).
+- **B3/B4** → Fase **1E** (restringir/autorizar `POST /cash/transactions`; não é corrigido na 1B).
+- **B5/B6/B7/B8** → validação server-side **antes da Fase 4A** (ver `GAME_DESIGN_PHASE0.md`, §19).
+- **B1** → Fase **1D**. **B9** → centavos nas tabelas novas (D8). **B10** → Fase **1E**.

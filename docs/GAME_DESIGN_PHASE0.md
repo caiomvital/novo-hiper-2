@@ -859,11 +859,21 @@ Legenda: **A** reaproveitar conceito **e código** · **B** reaproveitar conceit
 - **1A Harness de testes do backend** (banco temporário, porta efêmera).
 - **1B Backup SQLite com WAL**: `scripts/backup-sqlite.*` (API de backup / `VACUUM INTO`), restauração de teste, `integrity_check`, validação de contagens; **teste** que prova captura de dados só no WAL; documentação do procedimento.
 - **1C `finish` idempotente (D4)** + testes (sequencial e concorrente) + rollback.
+  - **(achado 1A-B2)** `PUT /api/orders/:id` **não poderá** marcar `status='entregue'` diretamente: a transição final ocorre **exclusivamente** pelo fluxo transacional oficial (`finish`). Hoje o `PUT` aceita `entregue` sem baixar estoque nem creditar caixa.
 - **1D Exclusão de planta com histórico** (confirmar e corrigir G4) + teste.
+- **(achado 1A-B3/B4, tratar na 1E além da autenticação)** `POST /api/cash/transactions` **não pode** continuar sendo uma forma genérica de o cliente criar crédito arbitrário nem `adjustment` (hoje subtraído como débito). A 1E deve **propor** a restrição/autorização dessa operação (ex.: crédito só via `finish`; débito só via compra; ajuste só administrativo). Não corrigir na 1B.
 - **1E Autenticação real (D1):** sessão/token validado; middleware em todas as rotas exceto `/api/health` (e uploads de imagens, se mantidos públicos *deliberadamente*); cookie `HttpOnly; Secure; SameSite=Strict` (ou token em header — decidir em P1); `AUTH_SECRET` obrigatório em produção; expiração; *rate limit* de login; hash de senha forte (scrypt) com migração segura; **remover a senha da tela de login**; restringir `POST /api/cash` (`credit`/`adjustment`) e `/api/migration`; front passa a usar `/api/auth/me` em vez do flag em `localStorage`.
 - **Atenção:** 1E altera **login em produção** → exige variáveis de ambiente novas e janela de deploy planejada; o Bernardo precisa estar presente para validar o login.
 - *Não inclui:* progressão, geração de pedidos, schema novo de jogo.
 - **PARAR PARA REVISÃO.**
+
+### Pré-requisito da Fase 4A — Validação server-side de pedidos/estoque *(achados 1A-B5/B6/B7/B8)*
+Antes de gerar pedidos no servidor, criar validação adequada, com testes:
+- quantidade **inteira e > 0** (sem `|| 1` silencioso); estoque **inteiro e ≥ 0** (sem truncar decimais);
+- **IDs duplicados** → 409 (não 500) em plantas, pedidos e clientes;
+- criação de pedido **sem deixar cliente órfão** (validar itens antes de criar o cliente, ou tudo na mesma transação);
+- **política explícita para estoque insuficiente** na criação do pedido (rejeitar? reservar? permitir e avisar?) — decisão a tomar com o Bernardo.
+Não implementar antes de ser autorizado.
 
 ### Fase 2 — Fundação da progressão persistente
 - **2A** `plants.source` (+ backfill revisado por você) e contagens elegíveis.
