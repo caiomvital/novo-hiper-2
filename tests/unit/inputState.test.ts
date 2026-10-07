@@ -121,3 +121,38 @@ describe('InputState (teclado + touch)', () => {
     expect(input.consumePress('interact')).toBe(false);
   });
 });
+
+describe('InputState suspenso (painel React aberto)', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it('não consome teclas nem toque e NÃO faz preventDefault; volta ao normal ao retomar', () => {
+    const input = new InputState();
+    input.attachKeyboard();
+    const press = (code: string) => {
+      const ev = new KeyboardEvent('keydown', { code, cancelable: true });
+      window.dispatchEvent(ev);
+      return ev;
+    };
+
+    input.setSuspended(true);
+    expect(press('KeyE').defaultPrevented).toBe(false); // a interface HTML pode usar a tecla
+    expect(input.consumePress('interact')).toBe(false);
+    input.setTouch('left', true);
+    expect(input.snapshot.left).toBe(false);
+
+    input.setSuspended(false);
+    expect(press('KeyE').defaultPrevented).toBe(true);
+    expect(input.consumePress('interact')).toBe(true);
+    input.detachKeyboard();
+  });
+
+  it('suspender limpa o que estava pressionado (Bernardo não fica "preso" andando ao fechar o painel)', () => {
+    const input = new InputState();
+    input.setTouch('right', true);
+    expect(input.snapshot.right).toBe(true);
+    input.setSuspended(true);
+    expect(input.snapshot.right).toBe(false);
+    input.setSuspended(false);
+    expect(input.snapshot.right).toBe(false);
+  });
+});

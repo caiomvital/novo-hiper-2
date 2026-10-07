@@ -10,6 +10,7 @@ import { gameRouter } from './routes/game';
 import { uploadRouter } from './routes/upload';
 import { migrationRouter } from './routes/migration';
 import { authRouter } from './routes/auth';
+import { shopRouter } from './routes/shop';
 import { getDb } from './db';
 import { csrfGuard, isTrustedOrigin, requireSession } from './auth/middleware';
 
@@ -98,6 +99,7 @@ app.use('/api/cash', cashRouter);
 app.use('/api/game', gameRouter);
 app.use('/api/upload', uploadRouter);
 app.use('/api/migration', migrationRouter);
+app.use('/api/shop', shopRouter);
 
 // Tratamento central de erros
 app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {

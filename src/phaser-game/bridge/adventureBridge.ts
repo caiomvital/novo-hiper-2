@@ -26,12 +26,27 @@ export interface AdventureSnapshot {
   lastDelivery: { order: AdventureOrder; reward: number } | null;
   /** Mensagem curta para o jogador (erros, por exemplo). */
   message: string | null;
+  /** Saldo REAL do caixa (vem do backend; o Phaser só exibe). null = ainda não carregado. */
+  cashBalance: number | null;
+  /** Melhorias da Novo Hiper já instaladas / compradas aguardando instalação (ids; estado do backend). */
+  installedUpgrades: string[];
+  pendingUpgrades: string[];
+  /** Um painel React (loja/instalação) está aberto: o mundo fica parado e sem interação. */
+  uiOpen: boolean;
 }
 
 export interface DeliverIntent {
   type: 'deliver';
   orderId: string;
 }
+/** Bernardo interagiu na porta da Loja de Utilidades / da Novo Hiper: o React abre o painel correspondente. */
+export interface OpenShopIntent {
+  type: 'openShop';
+}
+export interface OpenInstallIntent {
+  type: 'openInstall';
+}
+export type AdventureIntent = DeliverIntent | OpenShopIntent | OpenInstallIntent;
 
 export const DELIVERY_FEEDBACK_MS = 3000;
 export const DELIVERY_ERROR_MS = 3500;
@@ -43,10 +58,14 @@ export const INITIAL_SNAPSHOT: AdventureSnapshot = {
   phase: 'idle',
   lastDelivery: null,
   message: null,
+  cashBalance: null,
+  installedUpgrades: [],
+  pendingUpgrades: [],
+  uiOpen: false,
 };
 
 type SnapshotListener = (snapshot: AdventureSnapshot) => void;
-type IntentHandler = (intent: DeliverIntent) => void;
+type IntentHandler = (intent: AdventureIntent) => void;
 
 export class AdventureBridge {
   private snapshot: AdventureSnapshot = { ...INITIAL_SNAPSHOT };
@@ -68,10 +87,14 @@ export class AdventureBridge {
     return () => this.snapshotListeners.delete(listener);
   }
 
-  /** Phaser emite a intenção; só é aceita se o snapshot estiver ocioso e o pedido for o ativo (trava de duplo envio). */
-  emitIntent(intent: DeliverIntent): boolean {
+  /**
+   * Phaser emite a intenção; só é aceita com o snapshot ocioso e sem painel aberto.
+   * 'deliver' ainda exige que o pedido seja o ATIVO (trava de duplo envio).
+   */
+  emitIntent(intent: AdventureIntent): boolean {
     const s = this.snapshot;
-    if (s.phase !== 'idle' || !s.activeOrder || s.activeOrder.id !== intent.orderId) return false;
+    if (s.phase !== 'idle' || s.uiOpen) return false;
+    if (intent.type === 'deliver' && (!s.activeOrder || s.activeOrder.id !== intent.orderId)) return false;
     this.intentHandlers.forEach((h) => h(intent));
     return true;
   }

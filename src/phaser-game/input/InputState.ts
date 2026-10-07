@@ -29,7 +29,19 @@ export class InputState {
   /** Aperto "travado" até ser consumido: um toque rápido não se perde entre dois quadros do jogo (importante com FPS baixo). */
   private latched: Partial<Record<InputAction, boolean>> = {};
 
+  /** Painel React aberto (loja): o jogo não consome teclado/touch e NÃO dá preventDefault (a interface HTML usa as teclas). */
+  private suspended = false;
+
+  setSuspended(value: boolean) {
+    this.suspended = value;
+    if (value) {
+      this.state = createEmptySnapshot();
+      this.latched = {};
+    }
+  }
+
   private handleKeyDown = (event: KeyboardEvent) => {
+    if (this.suspended) return;
     const action = KEY_CODE_TO_ACTION[event.code];
     if (!action) return;
     event.preventDefault();
@@ -38,6 +50,7 @@ export class InputState {
   };
 
   private handleKeyUp = (event: KeyboardEvent) => {
+    if (this.suspended) return;
     const action = KEY_CODE_TO_ACTION[event.code];
     if (!action) return;
     event.preventDefault();
@@ -57,6 +70,7 @@ export class InputState {
   }
 
   setTouch(action: InputAction, pressed: boolean) {
+    if (this.suspended) return;
     if (pressed && !this.state[action]) this.latched[action] = true;
     this.state[action] = pressed;
   }

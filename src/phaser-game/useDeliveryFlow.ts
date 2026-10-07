@@ -61,6 +61,7 @@ export function useDeliveryFlow(bridge: AdventureBridge, onDataChanged?: () => v
     }, ORDER_POLL_MS);
 
     const offIntent = bridge.onIntent(async (intent) => {
+      if (intent.type !== 'deliver') return; // loja/instalação são tratadas por useShopFlow
       const snap = bridge.getSnapshot();
       const order = snap.activeOrder;
       // trava: só uma entrega por vez, e só do pedido que está na tela

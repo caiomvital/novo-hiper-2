@@ -44,7 +44,7 @@ describe('geometria principal do bairro', () => {
   });
 
   it('as casas não se sobrepõem entre si nem à Novo Hiper', () => {
-    const rects: Rect[] = [...WORLD_MAP.houses.map((h) => h.rect), WORLD_MAP.shop.rect, WORLD_MAP.closedBuilding.rect];
+    const rects: Rect[] = [...WORLD_MAP.houses.map((h) => h.rect), WORLD_MAP.shop.rect, WORLD_MAP.utilities.rect];
     for (let i = 0; i < rects.length; i++) for (let j = i + 1; j < rects.length; j++) expect(rectsOverlap(rects[i], rects[j]), `${i} x ${j}`).toBe(false);
     expect(WORLD_MAP.houses.length).toBeGreaterThanOrEqual(30);
   });

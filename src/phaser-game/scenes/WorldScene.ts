@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import { SCENE_KEYS } from '../sceneKeys';
 import { InputState } from '../input/InputState';
 import { WORLD, ENTRANCE_ZONE, CUSTOMER_SPOT } from '../config/worldConfig';
+import { ShopUpgradeVisuals } from '../world/shopUpgrades';
 import { resolveDestination, type DestinationHouse, type ResolvedDestination } from '../config/houseCatalog';
 import { WORLD_MAP, PLAYABLE_RECT } from '../config/worldMap';
 import { drawWorld } from '../world/drawWorld';
@@ -63,6 +64,11 @@ export class WorldScene extends Phaser.Scene {
   private placedFor: string | null = null;
   private indicatorIndicator: { meters: number; near: boolean; angle: number } | null = null;
   private nearCustomer = false;
+  private nearUtilities = false;
+  private nearShop = false;
+  private shopVisuals: ShopUpgradeVisuals | null = null;
+  private cashHud!: Phaser.GameObjects.Text;
+  private controlsHint!: Phaser.GameObjects.Text;
   private feedbackPlayedFor: string | null = null;
 
   constructor() {
@@ -79,6 +85,8 @@ export class WorldScene extends Phaser.Scene {
     this.entranceArmed = true;
     this.snap = null;
     this.nearCustomer = false;
+    this.nearUtilities = false;
+    this.nearShop = false;
     this.feedbackPlayedFor = null;
     this.facing = 'down';
     this.currentAnim = '';
@@ -137,7 +145,7 @@ export class WorldScene extends Phaser.Scene {
 
     this.cameras.main.startFollow(this.player, true, 0.12, 0.12);
 
-    this.add
+    this.controlsHint = this.add
       .text(16, 16, 'Setas / WASD para andar pelo bairro', {
         fontSize: '14px',
         color: '#fafaf9',
@@ -152,6 +160,24 @@ export class WorldScene extends Phaser.Scene {
   // ───────────────────────── entrega (vertical slice) ─────────────────────────
   private createDeliveryUi() {
     this.createCustomerTexture();
+    this.shopVisuals = new ShopUpgradeVisuals(this);
+    // Saldo REAL do caixa (valor vem do backend via snapshot; o Phaser só exibe)
+    this.cashHud = this.add
+      .text(0, 16, '', { fontSize: '13px', fontStyle: 'bold', color: '#bbf7d0', backgroundColor: '#1c1917cc', padding: { x: 8, y: 6 } })
+      .setOrigin(1, 0)
+      .setScrollFactor(0)
+      .setDepth(20)
+      .setVisible(false);
+    const layoutHud = () => {
+      const w = this.scale.width;
+      this.cashHud?.setPosition(w - 16, 16);
+      // em telas estreitas a dica de teclado (inútil no celular) cede o espaço ao saldo
+      this.controlsHint?.setVisible(w >= 560);
+    };
+    layoutHud();
+    this.scale.on('resize', layoutHud);
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => this.scale.off('resize', layoutHud));
+
     this.customerSprite = this.add.image(CUSTOMER_SPOT.x, CUSTOMER_SPOT.y, CUSTOMER_TEXTURE_KEY).setVisible(false);
     this.customerLabel = this.add
       .text(CUSTOMER_SPOT.x, CUSTOMER_SPOT.y + 34, '', {
@@ -252,6 +278,8 @@ export class WorldScene extends Phaser.Scene {
   /** Reflete o snapshot do React no mundo. Toda a lógica de negócio fica no React/backend. */
   private applySnapshot(snap: AdventureSnapshot) {
     this.snap = snap;
+    this.cashHud.setVisible(snap.cashBalance !== null).setText(snap.cashBalance !== null ? `Caixa: ${formatBRL(snap.cashBalance)}` : '');
+    this.shopVisuals?.apply(snap.installedUpgrades, snap.uiOpen);
     const order = snap.activeOrder;
     this.destination = order ? resolveDestination(order.destinationId) : null;
     const house = this.destination?.status === 'house' ? this.destination.house : null;
@@ -335,11 +363,19 @@ export class WorldScene extends Phaser.Scene {
     const snap = this.snap;
     const order = snap?.activeOrder ?? null;
     const target = this.activeTarget();
+    const interactive = Boolean(snap) && snap!.phase === 'idle' && !snap!.uiOpen;
     const canDeliver = Boolean(snap && order && target && snap.phase === 'idle');
-    this.nearCustomer = canDeliver && target !== null && isWithinRadius(this.player, target, target.interactRadius);
-    this.promptText.setVisible(this.nearCustomer);
-    if (this.nearCustomer && order) {
-      this.promptText.setText(`E / ✋  Entregar ${order.plantName} para ${order.customerName}`);
+    this.nearCustomer = canDeliver && interactive && target !== null && isWithinRadius(this.player, target, target.interactRadius);
+    const { utilities, shop } = WORLD_MAP;
+    this.nearUtilities = interactive && isWithinRadius(this.player, utilities.interact, utilities.interactRadius);
+    this.nearShop =
+      interactive && (snap?.pendingUpgrades.length ?? 0) > 0 && isWithinRadius(this.player, shop.interact, shop.interactRadius);
+    const showPrompt = this.nearCustomer || this.nearUtilities || this.nearShop;
+    this.promptText.setVisible(showPrompt);
+    if (showPrompt) {
+      if (this.nearCustomer && order) this.promptText.setText(`E / ✋  Entregar ${order.plantName} para ${order.customerName}`);
+      else if (this.nearUtilities) this.promptText.setText('E / ✋  Entrar na Loja de Utilidades');
+      else this.promptText.setText('E / ✋  Instalar melhorias na Novo Hiper');
       this.promptText.setPosition(this.cameras.main.width / 2, this.cameras.main.height - 150);
     }
     // Indicador de destino: só com entrega ativa e ocioso
@@ -359,9 +395,11 @@ export class WorldScene extends Phaser.Scene {
       this.indicatorIndicator = null;
     }
     const pressed = this.inputState.consumePress('interact');
-    if (pressed && this.nearCustomer && order && this.bridge) {
-      // Só EMITE a intenção: o React valida e chama start/finish; o backend é a autoridade.
-      this.bridge.emitIntent({ type: 'deliver', orderId: order.id });
+    if (pressed && this.bridge) {
+      // Só EMITE a intenção: o React valida e chama a API; o backend é a autoridade (entrega, compra e instalação).
+      if (this.nearCustomer && order) this.bridge.emitIntent({ type: 'deliver', orderId: order.id });
+      else if (this.nearUtilities) this.bridge.emitIntent({ type: 'openShop' });
+      else if (this.nearShop) this.bridge.emitIntent({ type: 'openInstall' });
     }
   }
 
@@ -428,6 +466,16 @@ export class WorldScene extends Phaser.Scene {
           ? { ...this.indicatorIndicator, text: this.indicatorText.text, arrowVisible: this.indicatorArrow.visible }
           : null,
         lastReward: this.snap?.lastDelivery?.reward ?? null,
+        shop: {
+          cashText: this.cashHud?.visible ? this.cashHud.text : null,
+          cashBalance: this.snap?.cashBalance ?? null,
+          installedUpgrades: this.snap?.installedUpgrades ?? [],
+          pendingUpgrades: this.snap?.pendingUpgrades ?? [],
+          uiOpen: this.snap?.uiOpen ?? false,
+          nearUtilities: this.nearUtilities,
+          nearShop: this.nearShop,
+          placaVisible: this.shopVisuals?.isInstalled('placa_madeira') ?? false,
+        },
       },
     };
   }
@@ -449,8 +497,9 @@ export class WorldScene extends Phaser.Scene {
 
     const body = this.player.body as Phaser.Physics.Arcade.Body;
     this.updateDelivery();
-    if (this.snap?.phase === 'delivering') {
-      body.setVelocity(0, 0); // parado enquanto o servidor confirma a entrega
+    if (this.snap?.phase === 'delivering' || this.snap?.uiOpen) {
+      body.setVelocity(0, 0); // parado enquanto o servidor confirma a entrega ou com um painel aberto
+      this.updatePlayerVisual(0, 0);
       return;
     }
     if (vx !== 0 || vy !== 0) {

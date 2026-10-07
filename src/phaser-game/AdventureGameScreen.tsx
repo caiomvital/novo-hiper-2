@@ -7,6 +7,8 @@ import { installDiagnostics } from './debug/diagnostics';
 import { TouchControls } from './ui/TouchControls';
 import { AdventureBridge } from './bridge/adventureBridge';
 import { useDeliveryFlow } from './useDeliveryFlow';
+import { useShopFlow } from './useShopFlow';
+import { ShopPanel } from './ui/ShopPanel';
 import { useFullscreen } from './useFullscreen';
 
 interface AdventureGameScreenProps {
@@ -24,6 +26,7 @@ export const AdventureGameScreen: React.FC<AdventureGameScreenProps> = ({ onExit
   const inputStateRef = useRef<InputState>(new InputState());
   const bridgeRef = useRef<AdventureBridge>(new AdventureBridge());
   useDeliveryFlow(bridgeRef.current, onDataChanged);
+  const shopFlow = useShopFlow(bridgeRef.current, inputStateRef.current, onDataChanged);
   const [activeMode, setActiveMode] = useState<SceneMode>('world');
   // Ao entrar/sair da tela cheia o Phaser só recalcula o tamanho do canvas (Scale.RESIZE): sem recriar Game nem cena
   const refreshScale = useCallback(() => {
@@ -124,6 +127,17 @@ export const AdventureGameScreen: React.FC<AdventureGameScreenProps> = ({ onExit
       <div className="relative flex-1 w-full h-full overflow-hidden bg-stone-900">
         <div ref={containerRef} className="absolute inset-0 w-full h-full" />
         {isTouchDevice && <TouchControls mode={activeMode} inputState={inputStateRef.current} />}
+        {shopFlow.panel && (
+          <ShopPanel
+            mode={shopFlow.panel}
+            shop={shopFlow.shop}
+            busy={shopFlow.busy}
+            message={shopFlow.message}
+            onClose={shopFlow.close}
+            onBuy={shopFlow.purchase}
+            onInstall={shopFlow.install}
+          />
+        )}
       </div>
     </div>
   );

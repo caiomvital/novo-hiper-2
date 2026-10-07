@@ -159,14 +159,37 @@ export function drawWorld(scene: Phaser.Scene, map: WorldMapData) {
   g.fillStyle(0x92400e, 1);
   for (const dx of [-120, -86, 86, 120]) g.fillRect(map.shop.door.x + dx - 7, s.y + s.h + 22, 14, 10);
 
-  // prédio fechado (futuro estabelecimento): telhado cinza e porta de enrolar
-  const cb = map.closedBuilding.rect;
-  fillRect(g, 0x64748b, cb);
-  frame(g, cb, 3);
-  const shutter: Rect = { x: cb.x + cb.w / 2 - 50, y: cb.y, w: 100, h: 40 };
-  fillRect(g, 0x94a3b8, shutter);
+  // Loja de Utilidades (quarteirão sul-central): telhado azul-petróleo, fachada clara voltada para a H3 (norte),
+  // toldo azul e branco, porta de enrolar erguida, vitrines, caixotes e baldes na calçada
+  const u = map.utilities.rect;
+  const ud = map.utilities.door;
+  fillRect(g, 0x155e75, u);
+  frame(g, u, 4);
+  g.lineStyle(3, 0x164e63, 1);
+  for (let y = u.y + 96; y < u.y + u.h - 14; y += 30) g.lineBetween(u.x + 12, y, u.x + u.w - 12, y);
+  const uFacade: Rect = { x: u.x, y: u.y, w: u.w, h: 62 };
+  fillRect(g, 0xe0f2fe, uFacade);
+  frame(g, uFacade, 3);
+  for (let i = 0, x = u.x; x < u.x + u.w; i++, x += 28) {
+    fillRect(g, i % 2 ? 0xffffff : 0x2563eb, { x, y: u.y, w: Math.min(28, u.x + u.w - x), h: 22 });
+  }
+  fillRect(g, 0x0f172a, { x: ud.x - 50, y: u.y + 26, w: 100, h: 34 }); // vão da porta de enrolar (aberta)
+  const roll: Rect = { x: ud.x - 50, y: u.y + 26, w: 100, h: 9 };
+  fillRect(g, 0x94a3b8, roll);
   g.lineStyle(2, 0x475569, 1);
-  for (let y = shutter.y + 8; y < shutter.y + shutter.h; y += 8) g.lineBetween(shutter.x, y, shutter.x + shutter.w, y);
+  g.lineBetween(roll.x, roll.y + 4, roll.x + roll.w, roll.y + 4);
+  fillRect(g, 0xfbbf24, { x: ud.x - 38, y: u.y + 44, w: 14, h: 14 }); // mercadorias à vista dentro da loja
+  fillRect(g, 0x38bdf8, { x: ud.x - 12, y: u.y + 46, w: 14, h: 12 });
+  fillRect(g, 0xf87171, { x: ud.x + 14, y: u.y + 44, w: 14, h: 14 });
+  fillRect(g, 0xbae6fd, { x: u.x + 22, y: u.y + 28, w: 62, h: 28 }); // vitrines
+  fillRect(g, 0xbae6fd, { x: u.x + u.w - 84, y: u.y + 28, w: 62, h: 28 });
+  fillRect(g, 0x38bdf8, { x: u.x + 22, y: u.y + 28, w: 62, h: 6 });
+  fillRect(g, 0x38bdf8, { x: u.x + u.w - 84, y: u.y + 28, w: 62, h: 6 });
+  // caixotes e baldes na calçada, longe do ponto de interação (decoração, sem colisão)
+  fillRect(g, 0xb45309, { x: ud.x - 118, y: u.y - 30, w: 30, h: 22 });
+  fillRect(g, 0x92400e, { x: ud.x - 84, y: u.y - 26, w: 24, h: 18 });
+  disc(ud.x + 96, u.y - 16, 10, 0xdc2626);
+  disc(ud.x + 120, u.y - 16, 10, 0x2563eb);
 
   // praça: fonte, bancos e árvores (copas sob o jogador; só o tronco é sólido)
   const f = map.plaza.fountain;
@@ -211,6 +234,7 @@ export function drawWorld(scene: Phaser.Scene, map: WorldMapData) {
       .setOrigin(0.5)
       .setDepth(2);
   label(map.shop.door.x, map.shop.rect.y + map.shop.rect.h - 84, 'NOVO HIPER', '#fff7ed', '#065f46', 20);
+  label(map.utilities.door.x, map.utilities.rect.y + 92, 'UTILIDADES', '#f0f9ff', '#1d4ed8', 18);
   for (const gate of map.gates) {
     const c = rectCenter(gate.rect);
     const above = gate.id === 'obras_sul' ? 28 : gate.id === 'obras_leste' ? -0 : -28;

@@ -1,6 +1,20 @@
 import { UNAUTHORIZED_EVENT } from './auth';
 import { Plant, DeliveryRecord, CustomerOrder, OrderStatus, CashRegister, SaleRecord } from '../types';
 
+export interface ShopUpgradeView {
+  id: string;
+  name: string;
+  description: string;
+  price: number;
+  state: 'available' | 'pending' | 'installed';
+  purchasedAt: number | null;
+  installedAt: number | null;
+}
+export interface ShopSnapshot {
+  balance: number;
+  upgrades: ShopUpgradeView[];
+}
+
 const API_BASE = import.meta.env.VITE_API_URL || '/api';
 
 class ApiClient {
@@ -27,15 +41,17 @@ class ApiClient {
 
     if (!response.ok) {
       let errorMessage = `Erro na requisição (${response.status})`;
+      let code: string | undefined;
       try {
         const errJson = await response.json();
         if (errJson?.error) {
           errorMessage = errJson.error;
         }
+        if (typeof errJson?.code === 'string') code = errJson.code;
       } catch {
         // Ignora caso não seja JSON
       }
-      throw new Error(errorMessage);
+      throw Object.assign(new Error(errorMessage), { code });
     }
 
     return response.json();
@@ -298,6 +314,19 @@ class ApiClient {
       totalSales: Number(data.totalSales || 0),
       salesHistory,
     };
+  }
+
+  // --- Loja de Utilidades (o backend é a autoridade de preço, saldo, compra e instalação) ---
+  async getShop(): Promise<ShopSnapshot> {
+    return this.request<ShopSnapshot>('/shop');
+  }
+
+  async purchaseShopUpgrade(id: string): Promise<ShopSnapshot & { alreadyApplied: boolean }> {
+    return this.request(`/shop/upgrades/${encodeURIComponent(id)}/purchase`, { method: 'POST', body: JSON.stringify({}) });
+  }
+
+  async installShopUpgrade(id: string): Promise<ShopSnapshot & { alreadyApplied: boolean }> {
+    return this.request(`/shop/upgrades/${encodeURIComponent(id)}/install`, { method: 'POST', body: JSON.stringify({}) });
   }
 
   // --- Jogo / Estado ---

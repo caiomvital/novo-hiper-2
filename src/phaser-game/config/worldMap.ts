@@ -53,8 +53,10 @@ export interface WorldMapData {
   sidewalk: number;
   blocks: BlockData[];
   houses: HouseData[];
-  shop: { rect: Rect; door: { x: number; y: number } };
-  closedBuilding: { rect: Rect };
+  /** Novo Hiper: `interact` = calçada em frente à porta, onde Bernardo instala melhorias compradas. */
+  shop: { rect: Rect; door: { x: number; y: number }; interact: { x: number; y: number }; interactRadius: number };
+  /** Loja de Utilidades (antigo prédio fechado do quarteirão sul-central): porta de enrolar voltada para a H3 (norte). */
+  utilities: { rect: Rect; door: { x: number; y: number }; interact: { x: number; y: number }; interactRadius: number };
   plaza: { rect: Rect; fountain: { x: number; y: number; r: number }; trees: Array<{ x: number; y: number }>; benches: Array<{ x: number; y: number }> };
   fences: Rect[];
   gates: GateData[];
@@ -151,7 +153,7 @@ const CUSTOMER_HOUSE: HouseData = {
 const CUSTOMER_DOOR = { x: 2560, y: 1750 };
 
 const ENTRANCE_LOT = block(3, 0);
-const CLOSED_BUILDING: Rect = { x: 1500, y: 1960, w: 280, h: 200 };
+const UTILITIES_RECT: Rect = { x: 1500, y: 1960, w: 280, h: 200 };
 const RESERVED_LOT = block(0, 3);
 
 const houses: HouseData[] = [
@@ -216,7 +218,7 @@ function makeBorderTrees(): Array<{ x: number; y: number; r: number }> {
 const solids: Rect[] = [
   ...houses.map((h) => h.rect),
   SHOP_RECT,
-  CLOSED_BUILDING,
+  UTILITIES_RECT,
   { x: FOUNTAIN.x - FOUNTAIN.r, y: FOUNTAIN.y - FOUNTAIN.r, w: FOUNTAIN.r * 2, h: FOUNTAIN.r * 2 },
   ...PLAZA_TREES.map((t) => ({ x: t.x - 18, y: t.y - 18, w: 36, h: 36 })),
   ...fences,
@@ -245,8 +247,8 @@ export const WORLD_MAP: WorldMapData = {
   sidewalk: SIDEWALK,
   blocks,
   houses,
-  shop: { rect: SHOP_RECT, door: { x: 1032, y: 1000 } },
-  closedBuilding: { rect: CLOSED_BUILDING },
+  shop: { rect: SHOP_RECT, door: { x: 1032, y: 1000 }, interact: { x: 1032, y: 1056 }, interactRadius: 64 },
+  utilities: { rect: UTILITIES_RECT, door: { x: 1640, y: 1960 }, interact: { x: 1640, y: 1932 }, interactRadius: 64 },
   plaza: {
     rect: PLAZA_RECT,
     fountain: FOUNTAIN,

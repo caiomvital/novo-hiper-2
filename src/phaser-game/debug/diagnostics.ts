@@ -46,6 +46,16 @@ export interface AdventureDiagnostics {
     hud: string;
     indicator: { meters: number; near: boolean; angle: number; text: string; arrowVisible: boolean } | null;
     lastReward: number | null;
+    shop: {
+      cashText: string | null;
+      cashBalance: number | null;
+      installedUpgrades: string[];
+      pendingUpgrades: string[];
+      uiOpen: boolean;
+      nearUtilities: boolean;
+      nearShop: boolean;
+      placaVisible: boolean;
+    };
   } | null;
 }
 
