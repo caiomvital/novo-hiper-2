@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { getDb } from '../db';
 import crypto from 'crypto';
+import { assignDestination } from '../destinations';
 
 export const ordersRouter = Router();
 
@@ -20,7 +21,7 @@ ordersRouter.get('/', async (_req: Request, res: Response) => {
         o.updated_at,
         c.name AS customer_name,
         c.avatar_path AS customer_avatar_url,
-        c.destination AS destination_id,
+        COALESCE(o.destination_id, c.destination) AS destination_id,
         c.address AS customer_address,
         c.role_description AS customer_role
       FROM orders o
@@ -79,7 +80,7 @@ ordersRouter.get('/:id', async (req: Request, res: Response) => {
         o.updated_at,
         c.name AS customer_name,
         c.avatar_path AS customer_avatar_url,
-        c.destination AS destination_id,
+        COALESCE(o.destination_id, c.destination) AS destination_id,
         c.address AS customer_address,
         c.role_description AS customer_role
       FROM orders o
@@ -145,6 +146,8 @@ ordersRouter.post('/', async (req: Request, res: Response) => {
     // Se o cliente não existir no banco, registrar cliente automaticamente se dados forem fornecidos
     if (!resolvedCustomerId && customer_name) {
       resolvedCustomerId = `cust_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
+      // A residência é atribuída pelo servidor (uma vez, gravada no cliente); `destination_id` do corpo é ignorado
+      const assigned = await assignDestination(db, resolvedCustomerId);
       await db.run(`
         INSERT INTO customers (id, name, avatar_path, destination, role_description, address, created_at)
         VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -152,7 +155,7 @@ ordersRouter.post('/', async (req: Request, res: Response) => {
         resolvedCustomerId,
         customer_name,
         customer_avatar_url || null,
-        destination_id || 'dest_default',
+        assigned,
         customer_role || null,
         customer_address || null,
         Date.now(),
@@ -160,6 +163,7 @@ ordersRouter.post('/', async (req: Request, res: Response) => {
     } else if (resolvedCustomerId) {
       const existingCust = await db.get('SELECT id FROM customers WHERE id = ?', resolvedCustomerId);
       if (!existingCust && customer_name) {
+        const assigned = await assignDestination(db, resolvedCustomerId);
         await db.run(`
           INSERT INTO customers (id, name, avatar_path, destination, role_description, address, created_at)
           VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -167,7 +171,7 @@ ordersRouter.post('/', async (req: Request, res: Response) => {
           resolvedCustomerId,
           customer_name,
           customer_avatar_url || null,
-          destination_id || 'dest_default',
+          assigned,
           customer_role || null,
           customer_address || null,
           Date.now(),
@@ -238,8 +242,8 @@ ordersRouter.post('/', async (req: Request, res: Response) => {
     await db.run('BEGIN TRANSACTION;');
     try {
       await db.run(`
-        INSERT INTO orders (id, customer_id, status, total, order_number, customer_message, created_at, updated_at)
-        VALUES (?, ?, 'recebido', ?, ?, ?, ?, ?)
+        INSERT INTO orders (id, customer_id, status, total, order_number, customer_message, created_at, updated_at, destination_id)
+        VALUES (?, ?, 'recebido', ?, ?, ?, ?, ?, (SELECT destination FROM customers WHERE id = ?))
       `, [
         orderId,
         resolvedCustomerId,
@@ -248,6 +252,7 @@ ordersRouter.post('/', async (req: Request, res: Response) => {
         customer_message || null,
         now,
         now,
+        resolvedCustomerId, // snapshot do endereço do cliente (o corpo da requisição não escolhe o destino do pedido)
       ]);
 
       for (const vItem of validatedItems) {
@@ -283,7 +288,7 @@ ordersRouter.post('/', async (req: Request, res: Response) => {
         o.updated_at,
         c.name AS customer_name,
         c.avatar_path AS customer_avatar_url,
-        c.destination AS destination_id,
+        COALESCE(o.destination_id, c.destination) AS destination_id,
         c.address AS customer_address,
         c.role_description AS customer_role
       FROM orders o

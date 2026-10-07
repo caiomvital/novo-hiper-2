@@ -4,7 +4,7 @@ import { DELIVERY_ERROR_MS, DELIVERY_FEEDBACK_MS } from '../../src/phaser-game/b
 import { formatBRL } from '../../src/phaser-game/logic/format';
 import { login, openAdventure, state, teleport, walkRoute } from './helpers';
 import { ROUTE_TO_CUSTOMER } from './routes';
-import { closeSuiteOrders, suiteId } from './suiteData';
+import { closeSuiteOrders, createSuiteOrder, suiteId } from './suiteData';
 
 
 async function api(page: Page, method: 'get' | 'post' | 'put', url: string, data?: unknown) {
@@ -19,9 +19,8 @@ const createPlant = async (page: Page, over: Record<string, unknown> = {}) => {
   return r.body;
 };
 const createOrder = async (page: Page, plantId: string, quantity = 1, customer = 'Cliente E2E') => {
-  const r = await api(page, 'post', '/api/orders', { id: suiteId('ord'), customer_name: customer, destination_id: 'dest_e2e', items: [{ plant_id: plantId, quantity }] });
-  expect(r.status).toBe(201);
-  return r.body;
+  // cliente na casa amarela (o ponto CUSTOMER_SPOT que estes testes percorrem)
+  return createSuiteOrder(page, { plantId, quantity, customerName: customer });
 };
 const orderStatus = async (page: Page, id: string) => (await api(page, 'get', `/api/orders/${id}`)).body.status as string;
 const stock = async (page: Page, id: string) => (await api(page, 'get', `/api/plants/${id}`)).body.stock_quantity as number;

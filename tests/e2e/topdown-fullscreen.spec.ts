@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { closeSuiteOrders, suiteId } from './suiteData';
+import { closeSuiteOrders, createSuiteOrder, suiteId } from './suiteData';
 import { login, openAdventure, state, holdKeys } from './helpers';
 
 const sprite = async (page: import('@playwright/test').Page) => (await state(page)).sprite!;
@@ -78,7 +78,7 @@ test.describe('fullscreen no PC', () => {
     await closeSuiteOrders(page);
     // pedido real aberto para provar que o pedido ativo não se perde
     const plant = await (await page.request.post('/api/plants', { data: { id: suiteId('plant_fs'), name: 'Planta FS', price: 10, stock_quantity: 3, image_path: '/a.jpg' } })).json();
-    const order = await (await page.request.post('/api/orders', { data: { id: suiteId('ord_fs'), customer_name: 'Cliente FS', destination_id: 'd', items: [{ plant_id: plant.id, quantity: 1 }] } })).json();
+    const order = await createSuiteOrder(page, { plantId: plant.id, customerName: 'Cliente FS' });
     await openAdventure(page);
     await page.waitForFunction(`window.__NH_ADVENTURE__?.getState().delivery?.activeOrderId`);
     const activeBefore = (await state(page)).delivery!.activeOrderId;

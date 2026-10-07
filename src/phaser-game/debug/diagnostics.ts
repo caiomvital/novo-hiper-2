@@ -39,6 +39,8 @@ export interface AdventureDiagnostics {
     customerName: string | null;
     customerVisible: boolean;
     customer: { x: number; y: number };
+    destination: { id: string; status: 'house' | 'unknown'; houseId: string | null; legacy: boolean } | null;
+    highlightVisible: boolean;
     near: boolean;
     promptVisible: boolean;
     hud: string;

@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import { SCENE_KEYS } from '../sceneKeys';
 import { InputState } from '../input/InputState';
 import { WORLD, ENTRANCE_ZONE, CUSTOMER_SPOT } from '../config/worldConfig';
+import { resolveDestination, type DestinationHouse, type ResolvedDestination } from '../config/houseCatalog';
 import { WORLD_MAP, PLAYABLE_RECT } from '../config/worldMap';
 import { drawWorld } from '../world/drawWorld';
 import { rectCenter } from '../logic/worldGeometry';
@@ -55,6 +56,11 @@ export class WorldScene extends Phaser.Scene {
   private indicatorText!: Phaser.GameObjects.Text;
   private indicatorArrow!: Phaser.GameObjects.Triangle;
   private deliveryRing!: Phaser.GameObjects.Arc;
+  private houseHighlight!: Phaser.GameObjects.Graphics;
+  private markerTween: Phaser.Tweens.Tween | null = null;
+  /** Destino do pedido ativo resolvido pelo catálogo (null = sem pedido). 'unknown' = não entrega em lugar nenhum. */
+  private destination: ResolvedDestination | null = null;
+  private placedFor: string | null = null;
   private indicatorIndicator: { meters: number; near: boolean; angle: number } | null = null;
   private nearCustomer = false;
   private feedbackPlayedFor: string | null = null;
@@ -161,7 +167,6 @@ export class WorldScene extends Phaser.Scene {
       .text(CUSTOMER_SPOT.x, CUSTOMER_SPOT.y - 50, '!', { fontSize: '28px', fontStyle: 'bold', color: '#fbbf24', stroke: '#1c1917', strokeThickness: 5 })
       .setOrigin(0.5)
       .setVisible(false);
-    this.tweens.add({ targets: this.customerMarker, y: CUSTOMER_SPOT.y - 58, yoyo: true, repeat: -1, duration: 500 });
 
     this.deliveryHud = this.add
       .text(16, 50, '', { fontSize: '13px', color: '#fafaf9', backgroundColor: '#1c1917cc', padding: { x: 8, y: 5 } })
@@ -198,6 +203,9 @@ export class WorldScene extends Phaser.Scene {
       .setDepth(0.4)
       .setVisible(false);
     this.tweens.add({ targets: this.deliveryRing, scale: 1.2, yoyo: true, repeat: -1, duration: 650 });
+    // Destaque da residência-destino (contorno + brilho na porta); redesenhado só quando o destino muda
+    this.houseHighlight = this.add.graphics().setDepth(0.3).setVisible(false);
+    this.tweens.add({ targets: this.houseHighlight, alpha: 0.55, yoyo: true, repeat: -1, duration: 700 });
 
     this.promptText = this.add
       .text(this.cameras.main.width / 2, this.cameras.main.height - 150, '', {
@@ -245,10 +253,15 @@ export class WorldScene extends Phaser.Scene {
   private applySnapshot(snap: AdventureSnapshot) {
     this.snap = snap;
     const order = snap.activeOrder;
-    this.customerSprite.setVisible(Boolean(order));
-    this.customerLabel.setVisible(Boolean(order)).setText(order ? order.customerName : '');
-    this.customerMarker.setVisible(Boolean(order) && snap.phase === 'idle');
-    this.deliveryRing.setVisible(Boolean(order) && snap.phase === 'idle');
+    this.destination = order ? resolveDestination(order.destinationId) : null;
+    const house = this.destination?.status === 'house' ? this.destination.house : null;
+    this.placeDestination(house);
+    const show = Boolean(order) && Boolean(house);
+    this.customerSprite.setVisible(show);
+    this.customerLabel.setVisible(show).setText(order ? order.customerName : '');
+    this.customerMarker.setVisible(show && snap.phase === 'idle');
+    this.deliveryRing.setVisible(show && snap.phase === 'idle');
+    this.houseHighlight.setVisible(show);
 
     let text = '';
     let color = '#fafaf9';
@@ -260,6 +273,9 @@ export class WorldScene extends Phaser.Scene {
     } else if (snap.phase === 'error') {
       text = snap.message || 'Não foi possível entregar agora.';
       color = '#fca5a5';
+    } else if (order && this.destination?.status === 'unknown') {
+      text = `Pedido #${order.orderNumber}: endereço desconhecido (${this.destination.destinationId || 'vazio'}). Entrega indisponível.`;
+      color = '#fca5a5';
     } else if (order) text = `Entrega #${order.orderNumber}: ${order.plantName} para ${order.customerName}`;
     else text = 'Sem entregas no momento';
     this.deliveryHud.setText(text).setColor(color).setVisible(text !== '');
@@ -270,11 +286,38 @@ export class WorldScene extends Phaser.Scene {
     }
   }
 
+  /** Posiciona NPC, nome, "!", anel e destaque na residência resolvida (só refaz quando ela muda). */
+  private placeDestination(house: DestinationHouse | null) {
+    const key = house ? house.destinationId : null;
+    if (key === this.placedFor) return;
+    this.placedFor = key;
+    this.houseHighlight.clear();
+    this.markerTween?.stop();
+    this.markerTween = null;
+    if (!house) return;
+    const { x, y } = house.deliveryPoint;
+    this.customerSprite.setPosition(x, y);
+    this.customerLabel.setPosition(x, y + 34);
+    this.customerMarker.setPosition(x, y - 50);
+    this.markerTween = this.tweens.add({ targets: this.customerMarker, y: y - 58, yoyo: true, repeat: -1, duration: 500 });
+    this.deliveryRing.setPosition(x, y + 6);
+    const r = house.rect;
+    this.houseHighlight.fillStyle(0xfbbf24, 0.16).fillRect(r.x - 6, r.y - 6, r.w + 12, r.h + 12);
+    this.houseHighlight.lineStyle(5, 0xfbbf24, 0.95).strokeRect(r.x - 6, r.y - 6, r.w + 12, r.h + 12);
+    this.houseHighlight.fillStyle(0xfde047, 0.9).fillRect(house.door.x - 20, house.door.y - 4, 40, 8);
+  }
+
+  /** Ponto de entrega do destino ativo (null = sem pedido ou endereço desconhecido). */
+  private activeTarget(): { x: number; y: number; interactRadius: number } | null {
+    return this.destination?.status === 'house' ? { ...this.destination.house.deliveryPoint, interactRadius: this.destination.house.interactRadius } : null;
+  }
+
   /** Confirmação visual: o cliente reage (pulinho) e "+ R$ X,XX" sobe e some. */
   private playDeliveryFeedback(reward: number) {
-    this.tweens.add({ targets: this.customerSprite, y: CUSTOMER_SPOT.y - 16, yoyo: true, repeat: 2, duration: 160 });
+    const spot = this.activeTarget() ?? CUSTOMER_SPOT;
+    this.tweens.add({ targets: this.customerSprite, y: spot.y - 16, yoyo: true, repeat: 2, duration: 160 });
     const money = this.add
-      .text(CUSTOMER_SPOT.x, CUSTOMER_SPOT.y - 40, `+ ${formatBRL(reward)}`, {
+      .text(spot.x, spot.y - 40, `+ ${formatBRL(reward)}`, {
         fontSize: '24px',
         fontStyle: 'bold',
         color: '#bbf7d0',
@@ -284,15 +327,16 @@ export class WorldScene extends Phaser.Scene {
       .setOrigin(0.5)
       .setDepth(30);
     // sobe durante ~2,4 s e só começa a sumir na segunda metade (fica legível durante o feedback)
-    this.tweens.add({ targets: money, y: CUSTOMER_SPOT.y - 120, duration: 2400, ease: 'Sine.easeOut' });
+    this.tweens.add({ targets: money, y: spot.y - 120, duration: 2400, ease: 'Sine.easeOut' });
     this.tweens.add({ targets: money, alpha: 0, delay: 1500, duration: 900, onComplete: () => money.destroy() });
   }
 
   private updateDelivery() {
     const snap = this.snap;
     const order = snap?.activeOrder ?? null;
-    const canDeliver = Boolean(snap && order && snap.phase === 'idle');
-    this.nearCustomer = canDeliver && isWithinRadius(this.player, CUSTOMER_SPOT, CUSTOMER_SPOT.interactRadius);
+    const target = this.activeTarget();
+    const canDeliver = Boolean(snap && order && target && snap.phase === 'idle');
+    this.nearCustomer = canDeliver && target !== null && isWithinRadius(this.player, target, target.interactRadius);
     this.promptText.setVisible(this.nearCustomer);
     if (this.nearCustomer && order) {
       this.promptText.setText(`E / ✋  Entregar ${order.plantName} para ${order.customerName}`);
@@ -303,8 +347,8 @@ export class WorldScene extends Phaser.Scene {
     this.indicatorBg.setVisible(showIndicator);
     this.indicatorTitle.setVisible(showIndicator);
     this.indicatorName.setVisible(showIndicator);
-    if (showIndicator && order) {
-      const ind = destinationIndicator(this.player, CUSTOMER_SPOT);
+    if (showIndicator && order && target) {
+      const ind = destinationIndicator(this.player, target);
       this.indicatorName.setText(order.customerName);
       this.indicatorArrow.setVisible(!ind.near).setRotation(ind.angle);
       this.indicatorText.setVisible(true).setText(ind.near ? 'Destino próximo' : formatMeters(ind.meters));
@@ -367,7 +411,16 @@ export class WorldScene extends Phaser.Scene {
         activeOrderId: this.snap?.activeOrder?.id ?? null,
         customerName: this.snap?.activeOrder?.customerName ?? null,
         customerVisible: this.customerSprite?.visible ?? false,
-        customer: { x: CUSTOMER_SPOT.x, y: CUSTOMER_SPOT.y },
+        customer: this.activeTarget() ? { x: this.activeTarget()!.x, y: this.activeTarget()!.y } : { x: CUSTOMER_SPOT.x, y: CUSTOMER_SPOT.y },
+        destination: this.destination
+          ? {
+              id: this.destination.destinationId,
+              status: this.destination.status,
+              houseId: this.destination.status === 'house' ? this.destination.house.houseId : null,
+              legacy: this.destination.status === 'house' ? this.destination.legacy : false,
+            }
+          : null,
+        highlightVisible: this.houseHighlight?.visible ?? false,
         near: this.nearCustomer,
         promptVisible: this.promptText?.visible ?? false,
         hud: this.deliveryHud?.text ?? '',

@@ -60,7 +60,7 @@ const cols = (d: ReturnType<typeof openRawDb>, t: string) => (d.raw.prepare(`PRA
 describe('migrations — lista oficial', () => {
   it('versões 1..N sem lacunas, nomes e SQL presentes, checksums estáveis', () => {
     expect(MIGRATIONS.map((m) => m.version)).toEqual(MIGRATIONS.map((_, i) => i + 1));
-    expect(MIGRATIONS.map((m) => m.name)).toEqual(['baseline', 'plants_deleted_at', 'sessions']);
+    expect(MIGRATIONS.map((m) => m.name)).toEqual(['baseline', 'plants_deleted_at', 'sessions', 'orders_destination']);
     // checksum insensível a espaços, sensível a conteúdo
     expect(checksumOf({ ...MIGRATIONS[1], sql: MIGRATIONS[1].sql.replace(/\s+/g, '   ') })).toBe(checksumOf(MIGRATIONS[1]));
     expect(checksumOf({ ...MIGRATIONS[1], sql: MIGRATIONS[1].sql + ' -- x ALTER' })).not.toBe(checksumOf(MIGRATIONS[1]));
@@ -71,7 +71,7 @@ describe('migrations — banco NOVO', () => {
   it('cria o schema completo, registra as versões e adiciona plants.deleted_at (+ índice)', async () => {
     const d = open(freshDbPath());
     const r = await runMigrations(d);
-    expect(r).toEqual({ applied: [1, 2, 3], currentVersion: 3 });
+    expect(r).toEqual({ applied: [1, 2, 3, 4], currentVersion: 4 });
     expect(tables(d)).toEqual(
       ['cash_transactions', 'customers', 'deliveries', 'game_progress', 'order_items', 'orders', 'plants', 'schema_migrations', 'sessions'].sort()
     );
@@ -79,7 +79,7 @@ describe('migrations — banco NOVO', () => {
     const idx = (d.raw.prepare("SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='plants'").all() as any[]).map((i) => i.name);
     expect(idx).toContain('idx_plants_deleted_at');
     const rows = d.raw.prepare('SELECT version, name, checksum, applied_at FROM schema_migrations ORDER BY version').all() as any[];
-    expect(rows.map((x) => [x.version, x.name])).toEqual([[1, 'baseline'], [2, 'plants_deleted_at'], [3, 'sessions']]);
+    expect(rows.map((x) => [x.version, x.name])).toEqual([[1, 'baseline'], [2, 'plants_deleted_at'], [3, 'sessions'], [4, 'orders_destination']]);
     expect(rows.map((x) => x.checksum)).toEqual(MIGRATIONS.map(checksumOf));
     expect(rows.every((x) => x.applied_at > 0)).toBe(true);
   });
@@ -97,13 +97,17 @@ describe('migrations — banco EXISTENTE (produção antiga, sem schema_migratio
     const before = Object.fromEntries(beforeTables.map((t) => [t, snapshot(t)]));
 
     const r = await runMigrations(d);
-    expect(r).toEqual({ applied: [1, 2, 3], currentVersion: 3 });
+    expect(r).toEqual({ applied: [1, 2, 3, 4], currentVersion: 4 });
 
     for (const t of beforeTables) {
       const after = snapshot(t) as any[];
       if (t === 'plants') {
         expect(after.every((row) => row.deleted_at === null)).toBe(true);
         expect(after.map(({ deleted_at, ...rest }) => rest)).toEqual(before[t]);
+      } else if (t === 'orders') {
+        // 004: pedidos antigos ganham o destino ATUAL do cliente copiado; nada mais muda
+        expect(after.map((row) => row.destination_id)).toEqual(['dest_vovo', 'dest_vovo']);
+        expect(after.map(({ destination_id, ...rest }) => rest)).toEqual(before[t]);
       } else {
         expect(after).toEqual(before[t]);
       }
@@ -120,7 +124,7 @@ describe('migrations — banco EXISTENTE (produção antiga, sem schema_migratio
       expect((await s.get('/api/cash/summary')).body).toMatchObject({ balance: 10, transactionCount: 1 });
       expect((await s.get('/api/orders/o1')).body.status).toBe('entregue');
       const versions = await s.db.all('SELECT version FROM schema_migrations ORDER BY version');
-      expect(versions.map((v: any) => v.version)).toEqual([1, 2, 3]);
+      expect(versions.map((v: any) => v.version)).toEqual([1, 2, 3, 4]);
     } finally {
       await s.close();
     }
@@ -134,7 +138,7 @@ describe('migrations — reexecução e segurança', () => {
     const before = d.raw.prepare('SELECT * FROM schema_migrations ORDER BY version').all();
     for (let i = 0; i < 3; i++) {
       const again = await runMigrations(d, MIGRATIONS, () => 999);
-      expect(again).toEqual({ applied: [], currentVersion: 3 });
+      expect(again).toEqual({ applied: [], currentVersion: 4 });
     }
     expect(d.raw.prepare('SELECT * FROM schema_migrations ORDER BY version').all()).toEqual(before);
   });
@@ -144,31 +148,31 @@ describe('migrations — reexecução e segurança', () => {
     await runMigrations(open(p));
     const second = await runMigrations(open(p));
     expect(second.applied).toEqual([]);
-    expect((open(p).raw.prepare('SELECT COUNT(*) AS n FROM schema_migrations').get() as any).n).toBe(3);
+    expect((open(p).raw.prepare('SELECT COUNT(*) AS n FROM schema_migrations').get() as any).n).toBe(4);
   });
 
   it('migration nova é aplicada UMA vez em banco já na versão anterior (evolução futura)', async () => {
     const d = open(freshDbPath());
     await runMigrations(d);
-    const v4: Migration = { version: 4, name: 'exemplo_futuro', sql: 'CREATE TABLE exemplo (id INTEGER PRIMARY KEY);' };
+    const v4: Migration = { version: 5, name: 'exemplo_futuro', sql: 'CREATE TABLE exemplo (id INTEGER PRIMARY KEY);' };
     const list = [...MIGRATIONS, v4];
-    expect(await runMigrations(d, list)).toEqual({ applied: [4], currentVersion: 4 });
-    expect(await runMigrations(d, list)).toEqual({ applied: [], currentVersion: 4 });
+    expect(await runMigrations(d, list)).toEqual({ applied: [5], currentVersion: 5 });
+    expect(await runMigrations(d, list)).toEqual({ applied: [], currentVersion: 5 });
   });
 
   it('migration que falha é atômica: nada dela persiste (nem o registro) e o erro é explícito', async () => {
     const d = open(freshDbPath());
     await runMigrations(d);
     const bad: Migration = {
-      version: 4,
+      version: 5,
       name: 'quebrada',
       sql: 'CREATE TABLE sera_desfeita (id INTEGER); INSERT INTO tabela_que_nao_existe VALUES (1);',
     };
     await expect(runMigrations(d, [...MIGRATIONS, bad])).rejects.toMatchObject({ code: 'MIGRATION_FAILED' });
     expect(tables(d)).not.toContain('sera_desfeita');
-    expect((d.raw.prepare('SELECT version FROM schema_migrations ORDER BY version').all() as any[]).map((r) => r.version)).toEqual([1, 2, 3]);
+    expect((d.raw.prepare('SELECT version FROM schema_migrations ORDER BY version').all() as any[]).map((r) => r.version)).toEqual([1, 2, 3, 4]);
     // e a conexão continua utilizável (a transação foi encerrada)
-    expect(await runMigrations(d)).toEqual({ applied: [], currentVersion: 3 });
+    expect(await runMigrations(d)).toEqual({ applied: [], currentVersion: 4 });
   });
 
   it('RECUSA migration já aplicada que foi editada (checksum)', async () => {

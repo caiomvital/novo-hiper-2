@@ -2,7 +2,7 @@ import { expect, test } from '@playwright/test';
 import { CUSTOMER_SPOT } from '../../src/phaser-game/config/worldConfig';
 import { PIXELS_PER_METER, PLAYABLE_RECT, WORLD_MAP } from '../../src/phaser-game/config/worldMap';
 import { NEAR_DESTINATION_PX } from '../../src/phaser-game/logic/destination';
-import { closeSuiteOrders, suiteId } from './suiteData';
+import { closeSuiteOrders, createSuiteOrder, suiteId } from './suiteData';
 import { holdKeys, login, openAdventure, state, teleport } from './helpers';
 
 const waitDelivery = (page: import('@playwright/test').Page, pred: string, timeout = 30_000) =>
@@ -94,7 +94,7 @@ test.describe('indicador de destino (direção e distância)', () => {
     await login(page);
     await closeSuiteOrders(page);
     const plant = await (await page.request.post('/api/plants', { data: { id: suiteId('plant_ind'), name: 'Planta Ind', price: 10, stock_quantity: 3, image_path: '/a.jpg' } })).json();
-    const order = await (await page.request.post('/api/orders', { data: { id: suiteId('ord_ind'), customer_name: 'Seu João IND', destination_id: 'd', items: [{ plant_id: plant.id, quantity: 1 }] } })).json();
+    const order = await createSuiteOrder(page, { plantId: plant.id, customerName: 'Seu João IND' });
     // abre sem outros pedidos abertos mais antigos competindo: o teste confere qual é o ativo
     await openAdventure(page);
     await page.waitForFunction(`window.__NH_ADVENTURE__?.getState().delivery?.activeOrderId`);

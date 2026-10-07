@@ -22,6 +22,7 @@ export function toAdventureOrder(o: CustomerOrder): AdventureOrder {
     id: o.id,
     orderNumber: o.orderNumber,
     customerName: o.customerName,
+    destinationId: o.destinationId,
     plantName: o.plantName,
     total: o.totalPrice,
   };

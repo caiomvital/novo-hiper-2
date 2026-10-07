@@ -48,7 +48,7 @@ gameRouter.get('/current', async (_req: Request, res: Response) => {
         o.created_at,
         c.name AS customer_name,
         c.avatar_path AS customer_avatar_url,
-        c.destination AS destination_id,
+        COALESCE(o.destination_id, c.destination) AS destination_id,
         c.address AS customer_address,
         c.role_description AS customer_role
       FROM orders o

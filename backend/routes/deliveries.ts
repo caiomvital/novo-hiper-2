@@ -20,7 +20,7 @@ deliveriesRouter.get('/', async (_req: Request, res: Response) => {
         o.order_number,
         o.total AS order_total,
         c.name AS customer_name,
-        c.destination AS destination_id,
+        COALESCE(o.destination_id, c.destination) AS destination_id,
         c.address AS customer_address
       FROM deliveries d
       JOIN orders o ON o.id = d.order_id
@@ -50,7 +50,7 @@ deliveriesRouter.get('/:id', async (req: Request, res: Response) => {
         o.order_number,
         o.total AS order_total,
         c.name AS customer_name,
-        c.destination AS destination_id,
+        COALESCE(o.destination_id, c.destination) AS destination_id,
         c.address AS customer_address
       FROM deliveries d
       JOIN orders o ON o.id = d.order_id

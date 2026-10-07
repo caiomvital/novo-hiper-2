@@ -1,4 +1,5 @@
 import type { Page } from '@playwright/test';
+import { LEGACY_DESTINATION_TARGET } from '../../src/shared/destinations';
 
 /**
  * Isolamento dos dados do E2E no backend de DEV compartilhado com o teste manual.
@@ -39,4 +40,21 @@ export async function closeSuiteOrders(page: Page, except: string[] = []) {
     const d = await page.request.post('/api/deliveries/start', { data: { order_id: o.id } });
     if (d.ok()) await page.request.post(`/api/deliveries/${(await d.json()).id}/finish`);
   }
+}
+
+/** Cliente da suíte com residência explícita (id "<região>/<casa>" ou legado). Padrão: a casa amarela. */
+export async function createSuiteCustomer(page: Page, name: string, destination = LEGACY_DESTINATION_TARGET) {
+  const r = await page.request.post('/api/customers', { data: { id: suiteId('cust'), name, destination } });
+  if (r.status() !== 201) throw new Error(`createSuiteCustomer: ${r.status()} ${await r.text()}`);
+  return (await r.json()) as { id: string; name: string; destination: string };
+}
+
+/** Pedido da suíte para um cliente (existente ou novo, criado já na residência pedida). */
+export async function createSuiteOrder(page: Page, opts: { plantId: string; quantity?: number; customerName?: string; destination?: string; customerId?: string }) {
+  const customerId = opts.customerId ?? (await createSuiteCustomer(page, opts.customerName ?? 'Cliente E2E', opts.destination)).id;
+  const r = await page.request.post('/api/orders', {
+    data: { id: suiteId('ord'), customer_id: customerId, items: [{ plant_id: opts.plantId, quantity: opts.quantity ?? 1 }] },
+  });
+  if (r.status() !== 201) throw new Error(`createSuiteOrder: ${r.status()} ${await r.text()}`);
+  return await r.json();
 }

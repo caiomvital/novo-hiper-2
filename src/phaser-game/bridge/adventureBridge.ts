@@ -7,6 +7,8 @@ export interface AdventureOrder {
   id: string;
   orderNumber: number;
   customerName: string;
+  /** Destino congelado no pedido ("<região>/<casa>" ou id legado); o Phaser resolve pelo catálogo do mapa. */
+  destinationId: string;
   plantName: string;
   /** Valor do pedido em reais (o servidor é a autoridade; aqui é só para exibir). */
   total: number;
