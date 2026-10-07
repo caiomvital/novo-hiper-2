@@ -126,7 +126,11 @@ export function useShopFlow(bridge: AdventureBridge, inputState: InputState, onD
       try {
         const res = await api.installShopUpgrade(id);
         publish(res);
-        close(); // o jogador vê a melhoria aparecer na fachada
+        if (res.upgrades.some((u) => u.state === 'pending')) {
+          setMessage({ kind: 'ok', text: 'Instalada! Ainda há melhorias para instalar.' });
+        } else {
+          close(); // nada mais a instalar: o jogador vê a melhoria aparecer na fachada
+        }
       } catch (err) {
         setMessage({ kind: 'error', text: (err as Error).message || 'Não foi possível instalar agora.' });
         await refresh();

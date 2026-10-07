@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { getDb } from '../db';
 import crypto from 'crypto';
+import { evaluateMilestonesSafe } from '../progress/milestones';
 
 export const plantsRouter = Router();
 
@@ -140,6 +141,7 @@ plantsRouter.post('/', async (req: Request, res: Response) => {
       now,
     ]);
 
+    await evaluateMilestonesSafe(db); // primeira_planta, plantas_cadastradas_3, bairro_vivo…
     const created = await db.get('SELECT * FROM plants WHERE id = ?', plantId);
     res.status(201).json(created);
   } catch (error) {

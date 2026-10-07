@@ -55,6 +55,8 @@ export interface AdventureDiagnostics {
       nearUtilities: boolean;
       nearShop: boolean;
       placaVisible: boolean;
+      /** Ids das melhorias com visual presente na cena. */
+      visuals: string[];
     };
   } | null;
 }

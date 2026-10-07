@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createOrder, createPlant, startDelivery } from './helpers/builders';
 import { startTestServer, TestServer } from './helpers/testServer';
 import { SHOP_UPGRADES } from '../../backend/shop/catalog';
-import { PLACA_MADEIRA } from '../../src/shared/shop';
+import { BANCO, JARDINEIRAS, PLACA_MADEIRA } from '../../src/shared/shop';
 
 let s: TestServer;
 beforeEach(async () => {
@@ -33,8 +33,11 @@ describe('Loja de Utilidades — catálogo e estado', () => {
     expect(r.body.balance).toBe(0);
     expect(r.body.upgrades).toEqual([
       expect.objectContaining({ id: PLACA_MADEIRA, price: 60, state: 'available', purchasedAt: null, installedAt: null }),
+      expect.objectContaining({ id: JARDINEIRAS, price: 90, state: 'available' }),
+      expect.objectContaining({ id: BANCO, price: 120, state: 'available' }),
     ]);
-    expect(SHOP_UPGRADES.map((u) => u.id)).toEqual([PLACA_MADEIRA]);
+    expect(SHOP_UPGRADES.map((u) => u.id)).toEqual([PLACA_MADEIRA, JARDINEIRAS, BANCO]);
+    expect(SHOP_UPGRADES.map((u) => u.id)).not.toContain('claraboia'); // ainda fora do catálogo
   });
 
   it('exige sessão (sem cookie → 401)', async () => {
@@ -145,6 +148,47 @@ describe('Loja de Utilidades — compra', () => {
     await expect(
       s.db.run(`INSERT INTO cash_transactions (id, amount, type, created_at) VALUES (?, 60, 'upgrade_purchase', 1)`, `shop_${PLACA_MADEIRA}`)
     ).rejects.toThrow();
+  });
+});
+
+describe('Loja de Utilidades — jardineiras e banco (mesmo modelo da placa)', () => {
+  it.each([
+    [JARDINEIRAS, 90],
+    [BANCO, 120],
+  ])('%s: preço do backend (R$ %i), débito único, pending → installed, idempotente', async (id, price) => {
+    await earn(200);
+    const r = await s.post(`/api/shop/upgrades/${id}/purchase`, { price: 0.01 }); // o preço do cliente é ignorado
+    expect(r.status).toBe(200);
+    expect(r.body).toMatchObject({ alreadyApplied: false, balance: 200 - price });
+    expect(r.body.upgrade).toMatchObject({ id, price, state: 'pending' });
+    expect((await s.post(`/api/shop/upgrades/${id}/purchase`)).body.alreadyApplied).toBe(true);
+    expect(await balance()).toBe(200 - price);
+    expect(await rows(`SELECT * FROM cash_transactions WHERE id = ?`, `shop_${id}`)).toEqual([expect.objectContaining({ amount: price, type: 'upgrade_purchase' })]);
+
+    expect((await install(id)).body.upgrade.state).toBe('installed');
+    expect((await install(id)).body.alreadyApplied).toBe(true);
+    // as outras continuam disponíveis e independentes
+    const states = Object.fromEntries((await s.get('/api/shop')).body.upgrades.map((u: any) => [u.id, u.state]));
+    expect(states[id]).toBe('installed');
+    expect(Object.values(states).filter((v) => v === 'available')).toHaveLength(2);
+  });
+
+  it('instalar jardineiras/banco sem comprar → 409; sem saldo → 400 sem débito', async () => {
+    await earn(100);
+    for (const id of [JARDINEIRAS, BANCO]) expect((await install(id)).status).toBe(409);
+    expect((await buy(BANCO)).status).toBe(400); // 100 < 120
+    expect((await buy(BANCO)).body).toMatchObject({ code: 'INSUFFICIENT_FUNDS', price: 120, balance: 100 });
+    expect(await balance()).toBe(100);
+    expect(await rows('SELECT * FROM shop_upgrades')).toHaveLength(0);
+  });
+
+  it('compras diferentes concorrentes: com saldo para só uma, uma passa e o saldo nunca fica negativo', async () => {
+    await earn(130); // banco (120) OU jardineiras (90): não as duas (210)
+    const results = await Promise.all([buy(BANCO), buy(JARDINEIRAS), buy(BANCO), buy(JARDINEIRAS)]);
+    const ok = results.filter((r) => r.status === 200 && r.body.alreadyApplied === false);
+    expect(ok).toHaveLength(1);
+    expect(await balance()).toBeGreaterThanOrEqual(0);
+    expect(await rows(`SELECT * FROM cash_transactions WHERE type = 'upgrade_purchase'`)).toHaveLength(1);
   });
 });
 

@@ -3,6 +3,8 @@
  *  - React → Phaser: SNAPSHOT (somente leitura para o Phaser).
  *  - Phaser → React: INTENÇÃO ('deliver'). O Phaser nunca chama a API; quem valida e chama é o React.
  */
+import type { StockHint } from '../logic/emptyState';
+
 export interface AdventureOrder {
   id: string;
   orderNumber: number;
@@ -33,6 +35,8 @@ export interface AdventureSnapshot {
   pendingUpgrades: string[];
   /** Um painel React (loja/instalação) está aberto: o mundo fica parado e sem interação. */
   uiOpen: boolean;
+  /** Motivo de não haver pedido (catálogo vazio / sem estoque / só aguardando). null = ainda não sabido. */
+  stockHint: StockHint | null;
 }
 
 export interface DeliverIntent {
@@ -62,6 +66,7 @@ export const INITIAL_SNAPSHOT: AdventureSnapshot = {
   installedUpgrades: [],
   pendingUpgrades: [],
   uiOpen: false,
+  stockHint: null,
 };
 
 type SnapshotListener = (snapshot: AdventureSnapshot) => void;

@@ -8,6 +8,7 @@ import {
   ORDER_POLL_MS,
 } from './bridge/adventureBridge';
 import { pickActiveOrder, toAdventureOrder } from './logic/activeOrder';
+import { StockHint, stockHintFor } from './logic/emptyState';
 
 /**
  * Lado React do vertical slice de entrega. O Phaser só emite a INTENÇÃO 'deliver'; aqui o React:
@@ -36,11 +37,22 @@ export function useDeliveryFlow(bridge: AdventureBridge, onDataChanged?: () => v
       return order ? toAdventureOrder(order) : null;
     };
 
+    /** Sem pedido ativo: por quê? (sem plantas / sem estoque / só aguardando). Falha de rede não alarma: assume 'ok'. */
+    const hintFor = async (order: AdventureOrder | null): Promise<StockHint> => {
+      if (order) return 'ok';
+      try {
+        return stockHintFor(await api.getPlants());
+      } catch {
+        return 'ok';
+      }
+    };
+
     /** (Re)carrega o pedido ativo e volta ao estado ocioso. */
     const reload = async () => {
       try {
         const next = await fetchActive();
-        if (alive) bridge.setSnapshot({ loaded: true, activeOrder: next, phase: 'idle', lastDelivery: null, message: null });
+        const stockHint = await hintFor(next);
+        if (alive) bridge.setSnapshot({ loaded: true, activeOrder: next, stockHint, phase: 'idle', lastDelivery: null, message: null });
       } catch {
         if (alive) bridge.setSnapshot({ loaded: true, phase: 'idle', lastDelivery: null, message: null });
       }
@@ -51,9 +63,11 @@ export function useDeliveryFlow(bridge: AdventureBridge, onDataChanged?: () => v
       if (!alive || document.hidden || bridge.getSnapshot().phase !== 'idle') return;
       try {
         const next = await fetchActive();
+        const stockHint = await hintFor(next);
         const snap = bridge.getSnapshot();
-        if (alive && snap.phase === 'idle' && (snap.activeOrder?.id ?? null) !== (next?.id ?? null)) {
-          bridge.setSnapshot({ loaded: true, activeOrder: next });
+        if (alive && snap.phase === 'idle') {
+          if ((snap.activeOrder?.id ?? null) !== (next?.id ?? null)) bridge.setSnapshot({ loaded: true, activeOrder: next, stockHint });
+          else if (snap.stockHint !== stockHint) bridge.setSnapshot({ stockHint });
         }
       } catch {
         /* sem rede/sessão: mantém o que já está na tela */
@@ -81,12 +95,13 @@ export function useDeliveryFlow(bridge: AdventureBridge, onDataChanged?: () => v
           /* publica "sem pedido" e a consulta periódica corrige */
         }
         if (next?.id === order.id) next = null;
+        const stockHint = await hintFor(next);
         if (!alive) return;
 
         // activeOrder continua sendo o pedido recém-entregue durante o feedback
         bridge.setSnapshot({ phase: 'done', lastDelivery: { order, reward }, message: null });
         void onDataChangedRef.current?.();
-        later(() => bridge.setSnapshot({ activeOrder: next, phase: 'idle', lastDelivery: null, message: null }), DELIVERY_FEEDBACK_MS);
+        later(() => bridge.setSnapshot({ activeOrder: next, stockHint, phase: 'idle', lastDelivery: null, message: null }), DELIVERY_FEEDBACK_MS);
       } catch (err) {
         if (!alive) return;
         const raw = err instanceof Error ? err.message : '';

@@ -21,6 +21,7 @@ import { facingFromMovement, selectTopdownAnimation } from '../logic/topdownAnim
 import { isWithinRadius } from '../logic/proximity';
 import { destinationIndicator, formatMeters } from '../logic/destination';
 import { formatBRL } from '../logic/format';
+import { emptyDeliveryMessage } from '../logic/emptyState';
 import type { AdventureBridge, AdventureSnapshot } from '../bridge/adventureBridge';
 import { REARM_DISTANCE, computeReturnPoint, distanceToEntrance, isInsideEntrance } from '../logic/worldEntrance';
 import { consumeWorldReturnPoint, setWorldReturnPoint } from '../transition/transitionStore';
@@ -305,7 +306,7 @@ export class WorldScene extends Phaser.Scene {
       text = `Pedido #${order.orderNumber}: endereço desconhecido (${this.destination.destinationId || 'vazio'}). Entrega indisponível.`;
       color = '#fca5a5';
     } else if (order) text = `Entrega #${order.orderNumber}: ${order.plantName} para ${order.customerName}`;
-    else text = 'Sem entregas no momento';
+    else text = emptyDeliveryMessage(snap.stockHint);
     this.deliveryHud.setText(text).setColor(color).setVisible(text !== '');
 
     if (snap.phase === 'done' && snap.lastDelivery && this.feedbackPlayedFor !== snap.lastDelivery.order.id) {
@@ -475,6 +476,7 @@ export class WorldScene extends Phaser.Scene {
           nearUtilities: this.nearUtilities,
           nearShop: this.nearShop,
           placaVisible: this.shopVisuals?.isInstalled('placa_madeira') ?? false,
+          visuals: this.shopVisuals?.visibleIds() ?? [],
         },
       },
     };

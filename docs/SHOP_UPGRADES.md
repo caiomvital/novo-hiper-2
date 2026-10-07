@@ -29,11 +29,11 @@ Loja de Utilidades (prédio do quarteirão sul-central, calçada da H3) → pain
 | Melhoria | Preço | Estado |
 |---|---|---|
 | Placa de madeira (fachada) | R$ 60 | **implementada** |
-| Jardineiras floridas | R$ 90 | planejada |
-| Banco de madeira | R$ 120 | planejada |
+| Jardineiras floridas | R$ 90 | **implementada** (provisória) |
+| Banco de madeira | R$ 120 | **implementada** (provisória) |
 | Claraboia de vidro no telhado | R$ 200 | planejada |
 
-Os itens planejados ainda não existem no catálogo do backend nem no jogo: entram quando forem implementados.
+A claraboia ainda não existe no catálogo do backend nem no jogo: entra quando for implementada. Os visuais de jardineiras e banco são PLACEHOLDERS decorativos, sem colisão (Art Pass futuro). Progressão e marcos: ver `docs/PROGRESSION.md`.
 
 ## Testes
 - Backend (banco descartável por teste): `tests/backend/shop.test.ts`.

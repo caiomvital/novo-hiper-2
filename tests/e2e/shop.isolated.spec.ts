@@ -1,7 +1,7 @@
 import { expect, Page, test } from '@playwright/test';
 import { CUSTOMER_SPOT } from '../../src/phaser-game/config/worldConfig';
 import { WORLD_MAP } from '../../src/phaser-game/config/worldMap';
-import { PLACA_MADEIRA } from '../../src/shared/shop';
+import { BANCO, JARDINEIRAS, PLACA_MADEIRA } from '../../src/shared/shop';
 import { cashBalance, earn, purchaseDebits, shopState } from './isolatedData';
 import { leaveAdventure, login, openAdventure, state, teleport } from './helpers';
 import { closeSuiteOrders, createSuiteOrder, suiteId } from './suiteData';
@@ -22,6 +22,20 @@ test.beforeEach(async ({ page }) => {
 });
 test.afterEach(({ page }) => closeSuiteOrders(page).catch(() => undefined));
 
+test('0a. sem nenhuma planta cadastrada: a Aventura diz o que fazer, sem alarme', async ({ page }) => {
+  await openAdventure(page);
+  await waitDelivery(page, 'd.loaded');
+  await waitDelivery(page, "d.hud === 'Cadastre uma planta na Novo Hiper para começar.'");
+  expect((await delivery(page)).activeOrderId).toBeNull();
+});
+
+test('0b. plantas cadastradas, mas todas sem estoque: mensagem própria', async ({ page }) => {
+  const r = await page.request.post('/api/plants', { data: { id: suiteId('plant'), name: 'Sem estoque', price: 10, stock_quantity: 0, image_path: '/a.jpg' } });
+  expect(r.status()).toBe(201);
+  await openAdventure(page);
+  await waitDelivery(page, "d.hud === 'As plantas estão sem estoque. Passe na Novo Hiper para conferir.'");
+});
+
 test('1. sem saldo suficiente: a compra não conclui, mostra mensagem simples e nada é debitado nem adquirido', async ({ page }) => {
   await earn(page, 30);
   expect(await cashBalance(page)).toBe(30);
@@ -29,6 +43,8 @@ test('1. sem saldo suficiente: a compra não conclui, mostra mensagem simples e 
   await openAdventure(page);
   await waitDelivery(page, 'd.shop.cashBalance !== null');
   expect(await hudCash(page)).toMatch(BRL('30,00'));
+  // há plantas com estoque e nenhum pedido aberto: mensagem comum
+  await waitDelivery(page, "d.hud === 'Sem entregas no momento'");
 
   await teleport(page, utilities.interact.x, utilities.interact.y);
   await waitDelivery(page, 'd.shop.nearUtilities && d.promptVisible');
@@ -163,4 +179,104 @@ test('5. a placa já comprada/instalada não pode ser comprada de novo (painel m
   expect((await again.json()).alreadyApplied).toBe(true);
   expect(await cashBalance(page)).toBe(15);
   expect(await purchaseDebits(page)).toHaveLength(1);
+});
+
+const progress = async (page: Page) => (await page.request.get('/api/progress')).json();
+
+test('6. três melhorias na loja; banco sem saldo não debita nada; jardineiras compradas ficam aguardando instalação', async ({ page }) => {
+  await earn(page, 100); // 15 + 100
+  expect(await cashBalance(page)).toBe(115);
+  await openAdventure(page);
+  await waitDelivery(page, 'd.shop.cashBalance === 115');
+  await teleport(page, utilities.interact.x, utilities.interact.y);
+  await waitDelivery(page, 'd.shop.nearUtilities');
+  await page.keyboard.press('KeyE');
+  await expect(page.locator('#shop-panel')).toBeVisible();
+
+  // placa instalada; jardineiras R$ 90 e banco R$ 120 à venda
+  await expect(page.locator('#shop-state-' + PLACA_MADEIRA)).toContainText(/instalada/i);
+  await expect(page.locator('#shop-item-' + JARDINEIRAS)).toContainText('90,00');
+  await expect(page.locator('#shop-item-' + BANCO)).toContainText('120,00');
+  await expect(page.locator('#shop-item-' + BANCO)).toContainText(/Faltam R\$\s*5,00/);
+  await expect(page.locator('#shop-item-' + JARDINEIRAS)).not.toContainText(/Faltam/);
+
+  // banco: 115 < 120 → o backend recusa; nada muda
+  await page.locator('#btn-shop-buy-' + BANCO).click();
+  await expect(page.locator('#shop-message')).toContainText(/saldo insuficiente/i);
+  await expect(page.locator('#shop-balance')).toHaveText(/R\$\s*115,00/);
+  expect(await cashBalance(page)).toBe(115);
+  expect(await purchaseDebits(page)).toHaveLength(1); // só a placa
+  expect((await shopState(page)).upgrades.find((u) => u.id === BANCO)!.state).toBe('available');
+
+  // jardineiras: compra (um débito de R$ 90) e fica "aguardando instalação"; ainda NÃO aparece na fachada
+  await page.locator('#btn-shop-buy-' + JARDINEIRAS).dblclick();
+  await expect(page.locator('#shop-balance')).toHaveText(/R\$\s*25,00/);
+  await expect(page.locator('#shop-state-' + JARDINEIRAS)).toContainText(/leve para a Novo Hiper/i);
+  expect(await cashBalance(page)).toBe(25);
+  expect((await purchaseDebits(page)).filter((t) => t.amount === 90)).toHaveLength(1);
+  await waitDelivery(page, "d.shop.pendingUpgrades.includes('jardineiras') && d.shop.cashBalance === 25");
+  expect((await delivery(page)).shop.visuals).not.toContain(JARDINEIRAS);
+  await page.keyboard.press('Escape');
+});
+
+test('7. compra do banco; volta à Novo Hiper e instala as duas; jardineiras e banco aparecem e persistem (reentrada e reload)', async ({ page }) => {
+  await earn(page, 100); // 25 + 100
+  await openAdventure(page);
+  await waitDelivery(page, 'd.shop.cashBalance === 125');
+  await teleport(page, utilities.interact.x, utilities.interact.y);
+  await waitDelivery(page, 'd.shop.nearUtilities');
+  await page.keyboard.press('KeyE');
+  await page.locator('#btn-shop-buy-' + BANCO).click();
+  await expect(page.locator('#shop-balance')).toHaveText(/R\$\s*5,00/);
+  expect(await cashBalance(page)).toBe(5);
+  await page.keyboard.press('Escape');
+  await waitDelivery(page, 'd.shop.pendingUpgrades.length === 2');
+  expect((await delivery(page)).shop.visuals).toEqual([PLACA_MADEIRA]); // nada novo na fachada ainda
+
+  // na Novo Hiper: as duas pendentes aparecem; instalar uma mantém o painel aberto até acabar
+  await teleport(page, shop.interact.x, shop.interact.y);
+  await waitDelivery(page, 'd.shop.nearShop && d.promptVisible');
+  await page.keyboard.press('KeyE');
+  await expect(page.locator('#btn-shop-install-' + JARDINEIRAS)).toBeVisible();
+  await expect(page.locator('#btn-shop-install-' + BANCO)).toBeVisible();
+
+  await page.locator('#btn-shop-install-' + JARDINEIRAS).click();
+  await expect(page.locator('#shop-message')).toContainText(/ainda há melhorias/i);
+  await expect(page.locator('#shop-panel')).toBeVisible();
+  await waitDelivery(page, "d.shop.visuals.includes('jardineiras') && !d.shop.visuals.includes('banco')");
+
+  await page.locator('#btn-shop-install-' + BANCO).click();
+  await expect(page.locator('#shop-panel')).toHaveCount(0);
+  await waitDelivery(page, "d.shop.visuals.includes('jardineiras') && d.shop.visuals.includes('banco') && !d.shop.uiOpen");
+  expect(new Set((await delivery(page)).shop.visuals)).toEqual(new Set([PLACA_MADEIRA, JARDINEIRAS, BANCO]));
+  expect(await cashBalance(page)).toBe(5); // instalar não cobra
+
+  // reentrada: as três já aparecem direto
+  await leaveAdventure(page);
+  await openAdventure(page);
+  await waitDelivery(page, 'd.shop.visuals.length === 3');
+  // reload da página inteira
+  await page.reload();
+  await page.locator('#tab-btn-adventure').click();
+  await page.waitForFunction(() => window.__NH_ADVENTURE__?.getState().scene === 'world');
+  await waitDelivery(page, 'd.shop.visuals.length === 3');
+  expect(new Set((await delivery(page)).shop.installedUpgrades)).toEqual(new Set([PLACA_MADEIRA, JARDINEIRAS, BANCO]));
+});
+
+test('8. progressão: marcos gravados pelos eventos, bairro_vivo ainda não, e a Aventura não mostra checklist', async ({ page }) => {
+  const p = await progress(page);
+  expect(p.stats).toMatchObject({ upgradesPurchased: 3, upgradesInstalled: 3, plantsRegisteredHistorical: expect.any(Number) });
+  for (const id of ['primeira_planta', 'primeira_entrega', 'primeira_melhoria', 'melhorias_3']) {
+    expect(p.milestones[id].achieved, id).toBe(true);
+    expect(p.milestones[id].achievedAt).toBeGreaterThan(0);
+  }
+  expect(p.milestones.entregas_10.achieved).toBe(false); // poucas entregas neste banco
+  expect(p.milestones.bairro_vivo.achieved).toBe(false);
+
+  // nada de contador/objetivo no HUD: só o saldo e as mensagens de sempre
+  await openAdventure(page);
+  await waitDelivery(page, 'd.shop.cashBalance !== null');
+  const hud = (await delivery(page)).hud;
+  expect(hud).not.toMatch(/\d+\s*\/\s*\d+/);
+  expect(hud).not.toMatch(/miss|n[ií]vel|xp|marco/i);
 });

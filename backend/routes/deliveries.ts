@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { getDb } from '../db';
 import crypto from 'crypto';
+import { evaluateMilestonesSafe } from '../progress/milestones';
 
 export const deliveriesRouter = Router();
 
@@ -333,6 +334,9 @@ deliveriesRouter.post('/:id/finish', async (req: Request, res: Response) => {
       res.status(status).json({ error: err.message || 'Falha na validação crítica da entrega.' });
       return;
     }
+
+    // 5b. Marcos de progressão (idempotente; nunca derruba a entrega já confirmada)
+    await evaluateMilestonesSafe(db);
 
     // 6. Estado final (lido do banco)
     const finishedDelivery = await db.get('SELECT * FROM deliveries WHERE id = ?', id);

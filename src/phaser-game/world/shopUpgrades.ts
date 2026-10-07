@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { WORLD_MAP } from '../config/worldMap';
-import { PLACA_MADEIRA } from '../../shared/shop';
+import { BANCO, JARDINEIRAS, PLACA_MADEIRA } from '../../shared/shop';
+import { BANCO_LAYOUT, JARDINEIRAS_LAYOUT } from '../config/shopLayout';
 
 /**
  * Visual das melhorias INSTALADAS na Novo Hiper (só apresentação; o estado vem do backend via snapshot).
@@ -60,8 +61,42 @@ const buildPlacaMadeira: Builder = (scene) => {
   return objs;
 };
 
+const GROUND_DEPTH = 0.8; // abaixo do jogador (depth 1): Bernardo passa por cima, sem colisão
+
+/** Duas jardineiras simples com flores (placeholder). */
+const buildJardineiras: Builder = (scene) => {
+  const g = scene.add.graphics().setDepth(GROUND_DEPTH);
+  const colors = [0xef4444, 0xfacc15, 0xf472b6, 0xffffff, 0xf97316];
+  for (const r of JARDINEIRAS_LAYOUT) {
+    g.fillStyle(0x000000, 0.25).fillRect(r.x + 3, r.y + 5, r.w, r.h);
+    g.fillStyle(0x92400e, 1).fillRect(r.x, r.y + 8, r.w, r.h - 8); // caixa de madeira
+    g.lineStyle(3, 0x451a03, 1).strokeRect(r.x, r.y + 8, r.w, r.h - 8);
+    g.fillStyle(0x713f12, 1).fillRect(r.x + 3, r.y + 11, r.w - 6, 5); // terra
+    colors.forEach((c, i) => {
+      const x = r.x + 9 + i * 12.5;
+      g.fillStyle(0x15803d, 1).fillCircle(x, r.y + 6, 7); // folhagem
+      g.fillStyle(c, 1).fillCircle(x, r.y + 2, 4.5); // flor
+    });
+  }
+  return [g];
+};
+
+/** Banco de madeira com encosto (placeholder). */
+const buildBanco: Builder = (scene) => {
+  const r = BANCO_LAYOUT;
+  const g = scene.add.graphics().setDepth(GROUND_DEPTH);
+  g.fillStyle(0x000000, 0.25).fillRect(r.x + 3, r.y + 6, r.w, r.h - 4);
+  g.fillStyle(0x451a03, 1).fillRect(r.x + 6, r.y + r.h - 10, 6, 10).fillRect(r.x + r.w - 12, r.y + r.h - 10, 6, 10); // pés
+  g.fillStyle(0xb45309, 1).fillRect(r.x, r.y + 12, r.w, 10); // assento
+  g.fillStyle(0x92400e, 1).fillRect(r.x, r.y, r.w, 9); // encosto
+  g.lineStyle(2, 0x451a03, 1).strokeRect(r.x, r.y, r.w, 9).strokeRect(r.x, r.y + 12, r.w, 10);
+  return [g];
+};
+
 const BUILDERS: Record<string, Builder> = {
   [PLACA_MADEIRA]: buildPlacaMadeira,
+  [JARDINEIRAS]: buildJardineiras,
+  [BANCO]: buildBanco,
 };
 
 export class ShopUpgradeVisuals {
@@ -94,6 +129,11 @@ export class ShopUpgradeVisuals {
 
   isInstalled(id: string) {
     return this.built.has(id);
+  }
+
+  /** Ids com visual presente (diagnóstico). */
+  visibleIds(): string[] {
+    return [...this.built.keys()];
   }
 
   destroy() {

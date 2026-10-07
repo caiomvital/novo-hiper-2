@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import { getDb, DbWrapper } from '../db';
 import { findUpgrade, SHOP_UPGRADES, UpgradeDef } from '../shop/catalog';
 import type { ShopUpgradeState } from '../../src/shared/shop';
+import { evaluateMilestonesSafe } from '../progress/milestones';
 
 export const shopRouter = Router();
 
@@ -114,6 +115,7 @@ shopRouter.post('/upgrades/:id/purchase', async (req: Request, res: Response) =>
     await db.run('COMMIT;');
     inTransaction = false;
 
+    await evaluateMilestonesSafe(db); // primeira_melhoria, melhorias_3, bairro_vivo…
     const snap = await snapshot(db);
     res.json({ success: true, alreadyApplied, ...snap, upgrade: snap.upgrades.find((u) => u.id === def.id) });
   } catch (err) {
@@ -152,6 +154,7 @@ shopRouter.post('/upgrades/:id/install', async (req: Request, res: Response) => 
     await db.run('COMMIT;');
     inTransaction = false;
 
+    await evaluateMilestonesSafe(db); // primeira_melhoria, melhorias_3, bairro_vivo…
     const snap = await snapshot(db);
     res.json({ success: true, alreadyApplied, ...snap, upgrade: snap.upgrades.find((u) => u.id === def.id) });
   } catch (err) {
