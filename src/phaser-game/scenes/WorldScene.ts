@@ -22,6 +22,7 @@ import { isWithinRadius } from '../logic/proximity';
 import { destinationIndicator, formatMeters } from '../logic/destination';
 import { formatBRL } from '../logic/format';
 import { emptyDeliveryMessage } from '../logic/emptyState';
+import { thanksFor } from '../../shared/roster';
 import type { AdventureBridge, AdventureSnapshot } from '../bridge/adventureBridge';
 import { REARM_DISTANCE, computeReturnPoint, distanceToEntrance, isInsideEntrance } from '../logic/worldEntrance';
 import { consumeWorldReturnPoint, setWorldReturnPoint } from '../transition/transitionStore';
@@ -71,6 +72,7 @@ export class WorldScene extends Phaser.Scene {
   private cashHud!: Phaser.GameObjects.Text;
   private controlsHint!: Phaser.GameObjects.Text;
   private feedbackPlayedFor: string | null = null;
+  private feedbackLine: string | null = null;
 
   constructor() {
     super(SCENE_KEYS.World);
@@ -89,6 +91,7 @@ export class WorldScene extends Phaser.Scene {
     this.nearUtilities = false;
     this.nearShop = false;
     this.feedbackPlayedFor = null;
+    this.feedbackLine = null;
     this.facing = 'down';
     this.currentAnim = '';
     this.inputState = this.registry.get('inputState');
@@ -285,7 +288,8 @@ export class WorldScene extends Phaser.Scene {
     this.destination = order ? resolveDestination(order.destinationId) : null;
     const house = this.destination?.status === 'house' ? this.destination.house : null;
     this.placeDestination(house);
-    const show = Boolean(order) && Boolean(house);
+    const needsRestock = Boolean(order) && order!.deliverable === false; // estoque baixado à mão: o pedido continua, mas não dá para entregar
+    const show = Boolean(order) && Boolean(house) && !needsRestock;
     this.customerSprite.setVisible(show);
     this.customerLabel.setVisible(show).setText(order ? order.customerName : '');
     this.customerMarker.setVisible(show && snap.phase === 'idle');
@@ -302,6 +306,9 @@ export class WorldScene extends Phaser.Scene {
     } else if (snap.phase === 'error') {
       text = snap.message || 'Não foi possível entregar agora.';
       color = '#fca5a5';
+    } else if (order && needsRestock) {
+      text = `Pedido #${order.orderNumber}: falta estoque de ${order.plantName}. Reponha na Novo Hiper para entregar.`;
+      color = '#fca5a5';
     } else if (order && this.destination?.status === 'unknown') {
       text = `Pedido #${order.orderNumber}: endereço desconhecido (${this.destination.destinationId || 'vazio'}). Entrega indisponível.`;
       color = '#fca5a5';
@@ -311,7 +318,7 @@ export class WorldScene extends Phaser.Scene {
 
     if (snap.phase === 'done' && snap.lastDelivery && this.feedbackPlayedFor !== snap.lastDelivery.order.id) {
       this.feedbackPlayedFor = snap.lastDelivery.order.id;
-      this.playDeliveryFeedback(snap.lastDelivery.reward);
+      this.playDeliveryFeedback(snap.lastDelivery.reward, snap.lastDelivery.order.customerId);
     }
   }
 
@@ -342,7 +349,7 @@ export class WorldScene extends Phaser.Scene {
   }
 
   /** Confirmação visual: o cliente reage (pulinho) e "+ R$ X,XX" sobe e some. */
-  private playDeliveryFeedback(reward: number) {
+  private playDeliveryFeedback(reward: number, customerId: string) {
     const spot = this.activeTarget() ?? CUSTOMER_SPOT;
     this.tweens.add({ targets: this.customerSprite, y: spot.y - 16, yoyo: true, repeat: 2, duration: 160 });
     const money = this.add
@@ -358,6 +365,22 @@ export class WorldScene extends Phaser.Scene {
     // sobe durante ~2,4 s e só começa a sumir na segunda metade (fica legível durante o feedback)
     this.tweens.add({ targets: money, y: spot.y - 120, duration: 2400, ease: 'Sine.easeOut' });
     this.tweens.add({ targets: money, alpha: 0, delay: 1500, duration: 900, onComplete: () => money.destroy() });
+
+    // Frase curta do cliente (uma por morador, do roster compartilhado): balão simples, sem diálogo
+    this.feedbackLine = thanksFor(customerId);
+    const bubble = this.add
+      .text(spot.x, spot.y - 74, `“${this.feedbackLine}”`, {
+        fontSize: '14px',
+        fontStyle: 'bold',
+        color: '#1c1917',
+        backgroundColor: '#fef3c7',
+        padding: { x: 10, y: 6 },
+        wordWrap: { width: 230 },
+        align: 'center',
+      })
+      .setOrigin(0.5, 1)
+      .setDepth(31);
+    this.tweens.add({ targets: bubble, alpha: 0, delay: 2000, duration: 700, onComplete: () => bubble.destroy() });
   }
 
   private updateDelivery() {
@@ -365,7 +388,7 @@ export class WorldScene extends Phaser.Scene {
     const order = snap?.activeOrder ?? null;
     const target = this.activeTarget();
     const interactive = Boolean(snap) && snap!.phase === 'idle' && !snap!.uiOpen;
-    const canDeliver = Boolean(snap && order && target && snap.phase === 'idle');
+    const canDeliver = Boolean(snap && order && order.deliverable !== false && target && snap.phase === 'idle');
     this.nearCustomer = canDeliver && interactive && target !== null && isWithinRadius(this.player, target, target.interactRadius);
     const { utilities, shop } = WORLD_MAP;
     this.nearUtilities = interactive && isWithinRadius(this.player, utilities.interact, utilities.interactRadius);
@@ -467,6 +490,8 @@ export class WorldScene extends Phaser.Scene {
           ? { ...this.indicatorIndicator, text: this.indicatorText.text, arrowVisible: this.indicatorArrow.visible }
           : null,
         lastReward: this.snap?.lastDelivery?.reward ?? null,
+        feedbackLine: this.feedbackLine,
+        deliverable: this.snap?.activeOrder ? this.snap.activeOrder.deliverable : null,
         shop: {
           cashText: this.cashHud?.visible ? this.cashHud.text : null,
           cashBalance: this.snap?.cashBalance ?? null,

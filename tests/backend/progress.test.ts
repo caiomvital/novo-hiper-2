@@ -69,9 +69,11 @@ describe('GET /api/progress — estado inicial e autenticação', () => {
       'casas_4',
       'plantas_cadastradas_3',
       'melhorias_3',
+      'vizinhos_2',
+      'vizinhos_3',
       'bairro_vivo',
     ]);
-    expect(MILESTONES.length).toBe(8);
+    expect(MILESTONES.length).toBe(10);
   });
 });
 

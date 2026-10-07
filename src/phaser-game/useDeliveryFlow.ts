@@ -8,7 +8,7 @@ import {
   ORDER_POLL_MS,
 } from './bridge/adventureBridge';
 import { pickActiveOrder, toAdventureOrder } from './logic/activeOrder';
-import { StockHint, stockHintFor } from './logic/emptyState';
+import { hintFromReason, StockHint } from './logic/emptyState';
 
 /**
  * Lado React do vertical slice de entrega. O Phaser só emite a INTENÇÃO 'deliver'; aqui o React:
@@ -32,43 +32,47 @@ export function useDeliveryFlow(bridge: AdventureBridge, onDataChanged?: () => v
       timers.add(t);
     };
 
-    const fetchActive = async (): Promise<AdventureOrder | null> => {
-      const order = pickActiveOrder(await api.getOrders());
-      return order ? toAdventureOrder(order) : null;
-    };
-
-    /** Sem pedido ativo: por quê? (sem plantas / sem estoque / só aguardando). Falha de rede não alarma: assume 'ok'. */
-    const hintFor = async (order: AdventureOrder | null): Promise<StockHint> => {
-      if (order) return 'ok';
-      try {
-        return stockHintFor(await api.getPlants());
-      } catch {
-        return 'ok';
+    /**
+     * Pedido ativo REAL do backend. Sem pedido, PEDE uma verificação (POST /orders/ensure): o backend decide se nasce um
+     * pedido (capacidade, estoque, clientes…) e devolve o motivo quando não nasce — usado só para a mensagem.
+     */
+    const loadActive = async (): Promise<{ order: AdventureOrder | null; stockHint: StockHint }> => {
+      let picked = pickActiveOrder(await api.getOrders());
+      let stockHint: StockHint = 'ok';
+      if (!picked) {
+        try {
+          const r = await api.ensureOrder();
+          stockHint = hintFromReason(r.reason);
+          if (r.created) picked = pickActiveOrder(await api.getOrders());
+        } catch {
+          /* sem rede/sessão: mantém "Sem entregas no momento" */
+        }
       }
+      return { order: picked ? toAdventureOrder(picked) : null, stockHint };
     };
 
     /** (Re)carrega o pedido ativo e volta ao estado ocioso. */
     const reload = async () => {
       try {
-        const next = await fetchActive();
-        const stockHint = await hintFor(next);
-        if (alive) bridge.setSnapshot({ loaded: true, activeOrder: next, stockHint, phase: 'idle', lastDelivery: null, message: null });
+        const { order, stockHint } = await loadActive();
+        if (alive) bridge.setSnapshot({ loaded: true, activeOrder: order, stockHint, phase: 'idle', lastDelivery: null, message: null });
       } catch {
         if (alive) bridge.setSnapshot({ loaded: true, phase: 'idle', lastDelivery: null, message: null });
       }
     };
 
-    // Pedidos novos podem chegar enquanto o jogador explora: consulta periódica, só quando ocioso
+    // Sem pedido para entregar: de tempos em tempos (nunca em rajada) PEDE ao backend nova verificação; com pedido, só reflete
+    // mudanças (pedido novo, estoque reposto/baixado). Não há timer de criação aqui: quem decide é o servidor.
     const poll = setInterval(async () => {
-      if (!alive || document.hidden || bridge.getSnapshot().phase !== 'idle') return;
+      if (!alive || document.hidden || bridge.getSnapshot().phase !== 'idle' || bridge.getSnapshot().uiOpen) return;
       try {
-        const next = await fetchActive();
-        const stockHint = await hintFor(next);
+        const { order, stockHint } = await loadActive();
         const snap = bridge.getSnapshot();
-        if (alive && snap.phase === 'idle') {
-          if ((snap.activeOrder?.id ?? null) !== (next?.id ?? null)) bridge.setSnapshot({ loaded: true, activeOrder: next, stockHint });
-          else if (snap.stockHint !== stockHint) bridge.setSnapshot({ stockHint });
-        }
+        if (!alive || snap.phase !== 'idle') return;
+        const changed =
+          (snap.activeOrder?.id ?? null) !== (order?.id ?? null) || (snap.activeOrder?.deliverable ?? null) !== (order?.deliverable ?? null);
+        if (changed) bridge.setSnapshot({ loaded: true, activeOrder: order, stockHint });
+        else if (snap.stockHint !== stockHint) bridge.setSnapshot({ stockHint });
       } catch {
         /* sem rede/sessão: mantém o que já está na tela */
       }
@@ -88,14 +92,15 @@ export function useDeliveryFlow(bridge: AdventureBridge, onDataChanged?: () => v
         const reward = Number(result?.order?.total ?? order.total);
 
         // próximo pedido (já sem o entregue), mas só é PUBLICADO depois do feedback
+        // (o backend já pode ter criado o próximo pedido ao finalizar; senão pedimos a verificação)
         let next: AdventureOrder | null = null;
+        let stockHint: StockHint = 'ok';
         try {
-          next = await fetchActive();
+          ({ order: next, stockHint } = await loadActive());
         } catch {
           /* publica "sem pedido" e a consulta periódica corrige */
         }
         if (next?.id === order.id) next = null;
-        const stockHint = await hintFor(next);
         if (!alive) return;
 
         // activeOrder continua sendo o pedido recém-entregue durante o feedback

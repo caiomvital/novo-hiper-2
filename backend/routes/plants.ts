@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import { getDb } from '../db';
 import crypto from 'crypto';
 import { evaluateMilestonesSafe } from '../progress/milestones';
+import { ensureOrderSafe } from '../orders/ensureOrder';
 
 export const plantsRouter = Router();
 
@@ -142,6 +143,7 @@ plantsRouter.post('/', async (req: Request, res: Response) => {
     ]);
 
     await evaluateMilestonesSafe(db); // primeira_planta, plantas_cadastradas_3, bairro_vivo…
+    await ensureOrderSafe(db); // evento: planta nova → o backend verifica se cabe um pedido
     const created = await db.get('SELECT * FROM plants WHERE id = ?', plantId);
     res.status(201).json(created);
   } catch (error) {
@@ -206,6 +208,7 @@ plantsRouter.put('/:id', async (req: Request, res: Response) => {
       id,
     ]);
 
+    await ensureOrderSafe(db); // evento: reposição/edição de estoque → o backend verifica se cabe um pedido
     const updated = await db.get('SELECT * FROM plants WHERE id = ?', id);
     res.json(updated);
   } catch (error) {

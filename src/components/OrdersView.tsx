@@ -24,7 +24,6 @@ interface OrdersViewProps {
   onUpdateOrderStatus: (orderId: string, newStatus: OrderStatus) => void;
   onDispatchToMap: (order: CustomerOrder) => void;
   onStartGameDelivery?: (order: CustomerOrder) => void;
-  onReceiveNewOrder: () => void;
   onGoToCatalog: () => void;
 }
 
@@ -34,7 +33,6 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
   onUpdateOrderStatus,
   onDispatchToMap,
   onStartGameDelivery,
-  onReceiveNewOrder,
   onGoToCatalog
 }) => {
   const [filter, setFilter] = useState<'todos' | OrderStatus>('todos');
@@ -119,17 +117,6 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
             Consulte as solicitações dos clientes, prepare os vasos de plantas e despache para entrega no mapa.
           </p>
         </div>
-
-        {/* Botão de Receber Novo Pedido */}
-        <button
-          id="btn-receive-new-order"
-          type="button"
-          onClick={onReceiveNewOrder}
-          className="inline-flex items-center justify-center gap-2 px-4 py-3 rounded-2xl bg-amber-500 hover:bg-amber-600 active:bg-amber-700 text-white font-display font-bold text-sm shadow-xs transition-all cursor-pointer flex-shrink-0"
-        >
-          <Sparkles className="w-4 h-4 text-amber-100" />
-          <span>Receber Novo Pedido 🔔</span>
-        </button>
       </div>
 
       {/* Alerta de Catálogo Vazio, Estoque Esgotado ou Loja em Funcionamento */}
@@ -316,16 +303,8 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
                 Nenhum pedido nesta categoria
               </h4>
               <p className="text-xs text-stone-500 max-w-sm mx-auto mb-5">
-                Você tem {availablePlantsCount} {availablePlantsCount === 1 ? 'planta com estoque' : 'plantas com estoque'}. Toque abaixo para receber um novo pedido de um cliente de Olinda!
+                Você tem {availablePlantsCount} {availablePlantsCount === 1 ? 'planta com estoque' : 'plantas com estoque'}. Os pedidos chegam sozinhos, conforme a loja funciona.
               </p>
-              <button
-                type="button"
-                onClick={onReceiveNewOrder}
-                className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-white font-display font-bold text-xs shadow-xs transition-all cursor-pointer"
-              >
-                <Sparkles className="w-4 h-4 text-amber-100" />
-                <span>Receber Novo Pedido 🔔</span>
-              </button>
             </>
           )}
         </div>

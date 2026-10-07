@@ -47,6 +47,7 @@ export interface TestServer {
 const MANAGED_ENV = [
   'DATA_DIR', 'DATABASE_PATH', 'UPLOADS_DIR', 'NODE_ENV', 'CORS_ORIGIN',
   'AUTH_USERNAME', 'AUTH_PASSWORD_HASH', 'AUTH_DEV_INSECURE_PASSWORD', 'SESSION_TTL_DAYS', 'ENABLE_LEGACY_MIGRATION',
+  'ORDER_AUTOGEN', 'ORDER_COOLDOWN_MS',
 ] as const;
 
 /**
@@ -80,6 +81,9 @@ export async function startTestServer(options: StartOptions = {}): Promise<TestS
   delete process.env.AUTH_PASSWORD_HASH;
   delete process.env.SESSION_TTL_DAYS;
   delete process.env.ENABLE_LEGACY_MIGRATION;
+  // Por padrão os testes NÃO geram pedidos automáticos (os testes antigos controlam seus próprios pedidos); os de geração ligam.
+  process.env.ORDER_AUTOGEN = 'off';
+  process.env.ORDER_COOLDOWN_MS = '0';
   for (const [k, v] of Object.entries(options.env ?? {})) {
     if (v === undefined) delete process.env[k];
     else process.env[k] = v;

@@ -11,8 +11,11 @@ export const DELIVERABLE_STATUSES = ['pronto', 'preparando', 'recebido'] as cons
 /** Prioridade: continuar uma entrega já iniciada ('pronto') antes de começar outra. Depois, o mais antigo. */
 export function pickActiveOrder(orders: CustomerOrder[]): CustomerOrder | null {
   const rank = (s: string) => (DELIVERABLE_STATUSES as readonly string[]).indexOf(s);
-  const eligible = orders.filter((o) => rank(o.status) >= 0);
-  if (eligible.length === 0) return null;
+  const open = orders.filter((o) => rank(o.status) >= 0);
+  if (open.length === 0) return null;
+  // prefere o que dá para entregar agora; se nenhum der (estoque baixado à mão), mostra mesmo assim para avisar
+  const deliverableNow = open.filter((o) => o.deliverable !== false);
+  const eligible = deliverableNow.length > 0 ? deliverableNow : open;
   eligible.sort((a, b) => rank(a.status) - rank(b.status) || a.createdAt - b.createdAt || a.orderNumber - b.orderNumber);
   return eligible[0];
 }
@@ -21,9 +24,11 @@ export function toAdventureOrder(o: CustomerOrder): AdventureOrder {
   return {
     id: o.id,
     orderNumber: o.orderNumber,
+    customerId: o.customerId,
     customerName: o.customerName,
     destinationId: o.destinationId,
     plantName: o.plantName,
+    deliverable: o.deliverable !== false,
     total: o.totalPrice,
   };
 }

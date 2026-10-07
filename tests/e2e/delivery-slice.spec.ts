@@ -132,6 +132,7 @@ test.describe('vertical slice: pedido real → mapa → cliente → entrega → 
   test('sem pedido ativo: mundo explorável, aviso discreto e nenhuma chamada de entrega', async ({ page }) => {
     await login(page);
     await closeSuiteOrders(page);
+    await createPlant(page); // com estoque: "sem pedido" é só questão de esperar (sem plantas a mensagem seria outra)
     const calls = countRequests(page);
     await openAdventure(page);
     await waitDelivery(page, 'd.loaded');
@@ -152,26 +153,29 @@ test.describe('vertical slice: pedido real → mapa → cliente → entrega → 
   test('erro do servidor (estoque insuficiente): mostra a mensagem, o pedido continua aberto e dá para tentar de novo', async ({ page }) => {
     await login(page);
     await closeSuiteOrders(page);
-    const plant = await createPlant(page, { stock_quantity: 1, price: 10 });
+    const plant = await createPlant(page, { stock_quantity: 2, price: 10 });
     const order = await createOrder(page, plant.id, 2);
     const cashBefore = await cash(page);
     await openAdventure(page);
-    await waitDelivery(page, `d.activeOrderId === ${JSON.stringify(order.id)}`);
+    await waitDelivery(page, `d.activeOrderId === ${JSON.stringify(order.id)} && d.deliverable === true`);
     await goToCustomer(page);
 
+    // o dono baixa o estoque à mão logo antes de Bernardo entregar (a tela ainda não percebeu): o SERVIDOR recusa
+    const p0 = (await api(page, 'get', `/api/plants/${plant.id}`)).body;
+    await api(page, 'put', `/api/plants/${plant.id}`, { name: p0.name, price: p0.price, stock_quantity: 1 });
     await page.keyboard.press('KeyE');
     await waitDelivery(page, "d.phase === 'error'");
     expect((await delivery(page)).hud).toMatch(/Estoque insuficiente/i);
     expect(await orderStatus(page, order.id)).not.toBe('entregue');
-    expect(await stock(page, plant.id)).toBe(1);
+    expect(await stock(page, plant.id)).toBe(1); // nunca negativo
     expect((await cash(page)).transactions.length).toBe(cashBefore.transactions.length);
 
-    // volta ao normal sozinho, com o MESMO pedido ativo
+    // volta ao normal sozinho, com o MESMO pedido ativo (agora a tela sabe que falta estoque)
     await waitDelivery(page, `d.phase === 'idle' && d.activeOrderId === ${JSON.stringify(order.id)}`, DELIVERY_ERROR_MS + 15_000);
 
-    // reabastece (catálogo) e tenta de novo: entrega normalmente, uma única vez
-    const p = (await api(page, 'get', `/api/plants/${plant.id}`)).body;
-    await api(page, 'put', `/api/plants/${plant.id}`, { name: p.name, price: p.price, stock_quantity: 5 });
+    // reabastece (catálogo): a tela percebe, libera a entrega e entrega normalmente, uma única vez
+    await api(page, 'put', `/api/plants/${plant.id}`, { name: p0.name, price: p0.price, stock_quantity: 5 });
+    await waitDelivery(page, 'd.deliverable === true && d.near', 30_000);
     await page.keyboard.press('KeyE');
     await waitDelivery(page, "d.phase === 'done'");
     expect(await orderStatus(page, order.id)).toBe('entregue');

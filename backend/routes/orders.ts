@@ -2,6 +2,8 @@ import { Router, Request, Response } from 'express';
 import { getDb } from '../db';
 import crypto from 'crypto';
 import { assignDestination } from '../destinations';
+import { ensureOrder } from '../orders/ensureOrder';
+import { fetchOrderView, insertOrderRows, OrderError, resolveItems } from '../orders/createOrder';
 
 export const ordersRouter = Router();
 
@@ -52,10 +54,16 @@ ordersRouter.get('/', async (_req: Request, res: Response) => {
       itemsByOrder[item.order_id].push(item);
     }
 
-    const result = orders.map((o) => ({
-      ...o,
-      items: itemsByOrder[o.id] || [],
-    }));
+    // `deliverable`: o estoque ATUAL cobre os itens do pedido aberto (o dono pode ter baixado o estoque depois)
+    const stock = new Map<string, number>((await db.all('SELECT id, stock_quantity FROM plants')).map((p: any) => [p.id, Number(p.stock_quantity)]));
+    const result = orders.map((o) => {
+      const its = itemsByOrder[o.id] || [];
+      return {
+        ...o,
+        items: its,
+        deliverable: o.status !== 'entregue' && its.length > 0 && its.every((it: any) => (stock.get(it.plant_id) ?? 0) >= Number(it.quantity)),
+      };
+    });
 
     res.json(result);
   } catch (error) {
@@ -117,23 +125,25 @@ ordersRouter.get('/:id', async (req: Request, res: Response) => {
   }
 });
 
-// POST /api/orders - Criar novo pedido
-// Valida cliente, plantas, preços e salva itens com unit_price fixado no momento
+// POST /api/orders/ensure — PEDE uma verificação de novo pedido automático. O backend decide (ensureOrder):
+// capacidade, recuo técnico, plantas, estoque livre e clientes desbloqueados. O cliente nunca decide quem, o quê nem quanto.
+//   { created: true, order }  ou  { created: false, reason: 'active_order'|'cooldown'|'no_plants'|'no_stock'|'no_customers'|'disabled' }
+ordersRouter.post('/ensure', async (_req: Request, res: Response) => {
+  try {
+    res.json(await ensureOrder(await getDb()));
+  } catch (error) {
+    console.error('Erro ao verificar novo pedido:', error);
+    res.status(500).json({ error: 'Erro ao verificar novo pedido.' });
+  }
+});
+
+// POST /api/orders - Criar novo pedido (compatibilidade; o jogo cria pedidos por /ensure)
+// O backend é a autoridade econômica: IGNORA unit_price, order_number e destination_id enviados pelo cliente.
+// Preço = o da planta persistida no momento; número = próximo sequencial; destino = o do cliente, congelado agora.
+// Dívida técnica: remover este endpoint quando nada mais depender dele.
 ordersRouter.post('/', async (req: Request, res: Response) => {
   try {
-    const { 
-      id, 
-      customer_id, 
-      items, 
-      customer_message, 
-      order_number, 
-      customer_name, 
-      customer_avatar_url, 
-      destination_id, 
-      customer_address, 
-      customer_role 
-    } = req.body;
-
+    const { id, customer_id, items, customer_message, customer_name, customer_avatar_url, customer_role, customer_address } = req.body;
     const db = await getDb();
 
     if (!items || !Array.isArray(items) || items.length === 0) {
@@ -143,39 +153,22 @@ ordersRouter.post('/', async (req: Request, res: Response) => {
 
     let resolvedCustomerId = customer_id;
 
-    // Se o cliente não existir no banco, registrar cliente automaticamente se dados forem fornecidos
+    // Cliente novo (sem id): registra com residência atribuída pelo servidor (o corpo não escolhe)
     if (!resolvedCustomerId && customer_name) {
       resolvedCustomerId = `cust_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
-      // A residência é atribuída pelo servidor (uma vez, gravada no cliente); `destination_id` do corpo é ignorado
       const assigned = await assignDestination(db, resolvedCustomerId);
-      await db.run(`
-        INSERT INTO customers (id, name, avatar_path, destination, role_description, address, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-      `, [
-        resolvedCustomerId,
-        customer_name,
-        customer_avatar_url || null,
-        assigned,
-        customer_role || null,
-        customer_address || null,
-        Date.now(),
-      ]);
+      await db.run(
+        `INSERT INTO customers (id, name, avatar_path, destination, role_description, address, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [resolvedCustomerId, customer_name, customer_avatar_url || null, assigned, customer_role || null, customer_address || null, Date.now()]
+      );
     } else if (resolvedCustomerId) {
       const existingCust = await db.get('SELECT id FROM customers WHERE id = ?', resolvedCustomerId);
       if (!existingCust && customer_name) {
         const assigned = await assignDestination(db, resolvedCustomerId);
-        await db.run(`
-          INSERT INTO customers (id, name, avatar_path, destination, role_description, address, created_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?)
-        `, [
-          resolvedCustomerId,
-          customer_name,
-          customer_avatar_url || null,
-          assigned,
-          customer_role || null,
-          customer_address || null,
-          Date.now(),
-        ]);
+        await db.run(
+          `INSERT INTO customers (id, name, avatar_path, destination, role_description, address, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          [resolvedCustomerId, customer_name, customer_avatar_url || null, assigned, customer_role || null, customer_address || null, Date.now()]
+        );
       } else if (!existingCust) {
         res.status(400).json({ error: 'Cliente especificado não foi encontrado.' });
         return;
@@ -185,136 +178,32 @@ ordersRouter.post('/', async (req: Request, res: Response) => {
       return;
     }
 
-    // Validar itens e plantas
-    const validatedItems: Array<{
-      plant_id: string;
-      quantity: number;
-      unit_price: number;
-    }> = [];
-
-    let calculatedTotal = 0;
-
-    for (const item of items) {
-      const plant = await db.get('SELECT id, name, price, stock_quantity, deleted_at FROM plants WHERE id = ?', item.plant_id);
-      if (!plant) {
-        res.status(400).json({ error: `Planta com ID "${item.plant_id}" não encontrada no catálogo.` });
-        return;
-      }
-      // Operação NOVA: planta removida do catálogo não pode entrar em pedido (os pedidos antigos seguem íntegros)
-      if (plant.deleted_at !== null && plant.deleted_at !== undefined) {
-        res.status(400).json({ code: 'PLANT_DELETED', error: `A planta "${plant.name}" foi removida do catálogo e não pode ser pedida.` });
-        return;
-      }
-
-      const qty = parseInt(item.quantity, 10) || 1;
-      if (qty <= 0) {
-        res.status(400).json({ error: `Quantidade inválida para a planta "${plant.name}".` });
-        return;
-      }
-
-      // Preço fixado no momento da criação da venda
-      const unitPrice = typeof item.unit_price === 'number' && item.unit_price >= 0 
-        ? item.unit_price 
-        : plant.price;
-
-      validatedItems.push({
-        plant_id: plant.id,
-        quantity: qty,
-        unit_price: unitPrice,
-      });
-
-      calculatedTotal += qty * unitPrice;
-    }
-
-    calculatedTotal = Math.round(calculatedTotal * 100) / 100;
-
-    const orderId = (id && typeof id === 'string') ? id : `ord_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
-    const now = Date.now();
-
-    // Determinar próximo order_number caso não venha informado
-    let finalOrderNum = order_number;
-    if (!finalOrderNum) {
-      const maxRow = await db.get('SELECT MAX(order_number) as max_num FROM orders');
-      finalOrderNum = (maxRow?.max_num || 100) + 1;
-    }
-
-    // Inserção atômica
-    await db.run('BEGIN TRANSACTION;');
+    let orderId: string;
+    let inTransaction = false;
     try {
-      await db.run(`
-        INSERT INTO orders (id, customer_id, status, total, order_number, customer_message, created_at, updated_at, destination_id)
-        VALUES (?, ?, 'recebido', ?, ?, ?, ?, ?, (SELECT destination FROM customers WHERE id = ?))
-      `, [
-        orderId,
-        resolvedCustomerId,
-        calculatedTotal,
-        finalOrderNum,
-        customer_message || null,
-        now,
-        now,
-        resolvedCustomerId, // snapshot do endereço do cliente (o corpo da requisição não escolhe o destino do pedido)
-      ]);
-
-      for (const vItem of validatedItems) {
-        const itemId = `item_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
-        await db.run(`
-          INSERT INTO order_items (id, order_id, plant_id, quantity, unit_price)
-          VALUES (?, ?, ?, ?, ?)
-        `, [
-          itemId,
-          orderId,
-          vItem.plant_id,
-          vItem.quantity,
-          vItem.unit_price,
-        ]);
-      }
-
+      await db.run('BEGIN IMMEDIATE;');
+      inTransaction = true;
+      const resolved = await resolveItems(db, items);
+      orderId = await insertOrderRows(db, { id, customerId: resolvedCustomerId, items: resolved.items, total: resolved.total, message: customer_message || null });
       await db.run('COMMIT;');
+      inTransaction = false;
     } catch (err) {
-      await db.run('ROLLBACK;');
+      if (inTransaction) {
+        try {
+          await db.run('ROLLBACK;');
+        } catch {
+          /* já encerrada */
+        }
+      }
       throw err;
     }
 
-    // Retornar pedido criado completo
-    const createdOrder = await db.get(`
-      SELECT 
-        o.id, 
-        o.customer_id, 
-        o.status, 
-        o.total, 
-        o.order_number, 
-        o.customer_message, 
-        o.created_at, 
-        o.updated_at,
-        c.name AS customer_name,
-        c.avatar_path AS customer_avatar_url,
-        COALESCE(o.destination_id, c.destination) AS destination_id,
-        c.address AS customer_address,
-        c.role_description AS customer_role
-      FROM orders o
-      LEFT JOIN customers c ON c.id = o.customer_id
-      WHERE o.id = ?
-    `, orderId);
-
-    const createdItems = await db.all(`
-      SELECT 
-        oi.id, 
-        oi.order_id, 
-        oi.plant_id, 
-        oi.quantity, 
-        oi.unit_price,
-        p.name AS plant_name,
-        p.image_path AS plant_photo_url
-      FROM order_items oi
-      LEFT JOIN plants p ON p.id = oi.plant_id
-      WHERE oi.order_id = ?
-    `, orderId);
-
-    res.status(201).json({
-      ...createdOrder,
-      items: createdItems,
-    });
+    res.status(201).json(await fetchOrderView(db, orderId));
   } catch (error) {
+    if (error instanceof OrderError) {
+      res.status(error.status).json({ ...(error.code ? { code: error.code } : {}), error: error.message });
+      return;
+    }
     console.error('Erro ao criar pedido:', error);
     res.status(500).json({ error: 'Erro ao criar pedido.' });
   }

@@ -69,6 +69,8 @@ export interface CustomerOrder {
   completedAt?: number;
   customerMessage?: string;
   isDemo?: boolean;
+  /** Calculado pelo backend: o estoque atual cobre este pedido aberto. */
+  deliverable?: boolean;
 }
 
 export type MainTab = 'catalogo' | 'pedidos' | 'entregas' | 'jogo' | 'aventura';

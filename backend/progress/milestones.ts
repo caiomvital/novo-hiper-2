@@ -14,6 +14,17 @@ export const THRESHOLDS = {
   melhorias: 3,
 } as const;
 
+/**
+ * Clientela crescente (grupos de moradores do roster). Internos, permanentes e NÃO mostrados como níveis:
+ * o jogador só percebe que gente nova começou a comprar. Só contagens (nunca dinheiro).
+ */
+export const NEIGHBORS = {
+  /** grupo 2: a loja já mudou (1ª melhoria instalada) e já houve algumas entregas */
+  grupo2: { melhoriasInstaladas: 1, entregas: 3 },
+  /** grupo 3: loja mais arrumada, mais entregas e um catálogo com alguma variedade */
+  grupo3: { melhoriasInstaladas: 2, entregas: 6, plantasCadastradas: 2 },
+} as const;
+
 export interface MilestoneDef {
   id: string;
   reached: (s: ProgressStats) => boolean;
@@ -28,6 +39,14 @@ export const MILESTONES: readonly MilestoneDef[] = [
   { id: 'casas_4', reached: (s) => s.distinctHousesServed >= THRESHOLDS.casas },
   { id: 'plantas_cadastradas_3', reached: (s) => s.plantsRegisteredHistorical >= THRESHOLDS.plantas },
   { id: 'melhorias_3', reached: (s) => s.upgradesInstalled >= THRESHOLDS.melhorias },
+  { id: 'vizinhos_2', reached: (s) => s.upgradesInstalled >= NEIGHBORS.grupo2.melhoriasInstaladas && s.deliveriesCompleted >= NEIGHBORS.grupo2.entregas },
+  {
+    id: 'vizinhos_3',
+    reached: (s) =>
+      s.upgradesInstalled >= NEIGHBORS.grupo3.melhoriasInstaladas &&
+      s.deliveriesCompleted >= NEIGHBORS.grupo3.entregas &&
+      s.plantsRegisteredHistorical >= NEIGHBORS.grupo3.plantasCadastradas,
+  },
   // Gatilho interno do primeiro arco. NÃO tem efeito visual ainda (nenhuma barreira, região, dinheiro ou XP).
   {
     id: 'bairro_vivo',

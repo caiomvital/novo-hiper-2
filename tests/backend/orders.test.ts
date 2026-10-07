@@ -25,19 +25,38 @@ describe('pedidos — comportamento ATUAL', () => {
     expect(o2.order_number).toBe(102);
   });
 
-  it('usa order_number informado quando vier', async () => {
+  it('order_number é atribuído pelo BACKEND (sequencial); o que o cliente enviar é ignorado', async () => {
     const a = await createPlant(s);
-    expect((await createOrder(s, [{ plant_id: a.id }], { order_number: 500 })).order_number).toBe(500);
+    expect((await createOrder(s, [{ plant_id: a.id }], { order_number: 500 })).order_number).toBe(101);
+    expect((await createOrder(s, [{ plant_id: a.id }], { order_number: 7 })).order_number).toBe(102);
+    expect((await createOrder(s, [{ plant_id: a.id }])).order_number).toBe(103);
   });
 
-  it('preço do item é "congelado" na criação; unit_price do cliente é aceito se número ≥ 0', async () => {
+  it('criações simultâneas não repetem order_number', async () => {
+    const a = await createPlant(s, { stock_quantity: 50 });
+    const made = await Promise.all(Array.from({ length: 12 }, () => createOrder(s, [{ plant_id: a.id }], { order_number: 1 })));
+    const numbers = made.map((o) => o.order_number);
+    expect(new Set(numbers).size).toBe(12);
+    expect(Math.min(...numbers)).toBe(101);
+    expect(Math.max(...numbers)).toBe(112);
+  });
+
+  it('o PREÇO é o da planta persistida, congelado no item: unit_price do cliente é IGNORADO', async () => {
     const a = await createPlant(s, { price: 10 });
     const o = await createOrder(s, [{ plant_id: a.id, quantity: 2, unit_price: 3 }]);
-    expect(o.items[0].unit_price).toBe(3);
-    expect(o.total).toBe(6);
+    expect(o.items[0].unit_price).toBe(10);
+    expect(o.total).toBe(20);
+    const free = await createOrder(s, [{ plant_id: a.id, unit_price: 0 }]);
+    const huge = await createOrder(s, [{ plant_id: a.id, unit_price: 999999 }]);
+    expect(free.total).toBe(10);
+    expect(huge.total).toBe(10);
+    // reprecificar a planta depois NÃO muda pedidos antigos
     await s.put(`/api/plants/${a.id}`, { name: 'x', price: 99, stock_quantity: 5 });
     const read = await s.get(`/api/orders/${o.id}`);
-    expect(read.body.items[0].unit_price).toBe(3);
+    expect(read.body.items[0].unit_price).toBe(10);
+    expect(read.body.total).toBe(20);
+    // e pedidos NOVOS usam o preço novo
+    expect((await createOrder(s, [{ plant_id: a.id }])).total).toBe(99);
   });
 
   it('reutiliza cliente existente por customer_id; cliente inexistente sem nome → 400', async () => {

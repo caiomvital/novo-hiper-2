@@ -9,8 +9,12 @@ export const USERNAME = 'Bernardo';
 // Não é, e nunca deve ser, a senha de produção.
 export const PASSWORD = process.env.E2E_PASSWORD ?? 'dev-only-test-password-1';
 
-export async function login(page: Page) {
-  await isolateSuiteOrders(page); // a Aventura só enxerga pedidos criados pela suíte (nunca os manuais do DEV)
+/**
+ * Entra no app. Por padrão a Aventura só enxerga pedidos criados pela suíte (ids `e2e_`): protege de pedidos gerados
+ * pelo backend que não interessam ao teste. Passe `{ filterOrders: false }` para ver TUDO que o backend criar.
+ */
+export async function login(page: Page, opts: { filterOrders?: boolean } = {}) {
+  if (opts.filterOrders !== false) await isolateSuiteOrders(page);
   await page.goto('/');
   await page.getByPlaceholder(/Nome do lojista/).fill(USERNAME);
   await page.getByPlaceholder('Digite a senha da loja').fill(PASSWORD);

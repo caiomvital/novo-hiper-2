@@ -1,6 +1,8 @@
 import { UNAUTHORIZED_EVENT } from './auth';
 import { Plant, DeliveryRecord, CustomerOrder, OrderStatus, CashRegister, SaleRecord } from '../types';
 
+export type EnsureReason = 'active_order' | 'cooldown' | 'no_plants' | 'no_stock' | 'no_customers' | 'disabled';
+
 export interface ShopUpgradeView {
   id: string;
   name: string;
@@ -193,55 +195,18 @@ class ApiClient {
         status: o.status as OrderStatus,
         createdAt: o.created_at,
         customerMessage: o.customer_message || undefined,
+        deliverable: o.deliverable,
       };
     });
   }
 
-  async createOrder(order: Partial<CustomerOrder>): Promise<CustomerOrder> {
-    const payload = {
-      id: order.id,
-      customer_id: order.customerId,
-      customer_name: order.customerName,
-      customer_avatar_url: order.customerAvatarUrl,
-      customer_role: order.customerRole,
-      customer_address: order.customerAddress,
-      destination_id: order.destinationId,
-      customer_message: order.customerMessage,
-      order_number: order.orderNumber,
-      items: [
-        {
-          plant_id: order.plantId,
-          quantity: order.quantity || 1,
-          unit_price: order.plantPrice,
-        },
-      ],
-    };
-
-    const o = await this.request<any>('/orders', {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    });
-
-    const firstItem = o.items?.[0];
-    return {
-      id: o.id,
-      orderNumber: o.order_number,
-      customerId: o.customer_id,
-      customerName: o.customer_name,
-      customerAvatarUrl: o.customer_avatar_url,
-      customerRole: o.customer_role,
-      customerAddress: o.customer_address,
-      destinationId: o.destination_id,
-      plantId: firstItem?.plant_id,
-      plantName: firstItem?.plant_name,
-      plantPrice: Number(firstItem?.unit_price),
-      plantPhotoUrl: firstItem?.plant_photo_url,
-      quantity: Number(firstItem?.quantity || 1),
-      totalPrice: Number(o.total),
-      status: o.status as OrderStatus,
-      createdAt: o.created_at,
-      customerMessage: o.customer_message,
-    };
+  /**
+   * PEDE ao backend uma verificação de novo pedido automático. Quem decide (e escolhe cliente, planta, preço e número)
+   * é o backend; o cliente só recebe o resultado.
+   */
+  async ensureOrder(): Promise<{ created: boolean; reason?: EnsureReason }> {
+    const r = await this.request<{ created: boolean; reason?: EnsureReason }>('/orders/ensure', { method: 'POST', body: JSON.stringify({}) });
+    return { created: r.created, reason: r.reason };
   }
 
   async updateOrderStatus(id: string, status: OrderStatus): Promise<void> {

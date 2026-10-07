@@ -1,13 +1,20 @@
 import { defineConfig } from '@playwright/test';
 
-// E2E roda contra um Vite de DEV em 127.0.0.1:5174 (porta própria, não interfere no 5173),
-// com /api encaminhado ao backend ISOLADO de desenvolvimento (data-dev, nunca produção).
-const API_TARGET = process.env.DEV_API_TARGET ?? 'http://127.0.0.1:4317';
-const PORT = 5174;
-// Stack ISOLADO (backend com banco temporário descartável + Vite próprio) para specs *.isolated.spec.ts:
-// testes que controlam saldo/compras/estado. O data-dev compartilhado fica só para o teste MANUAL e specs comuns.
-const ISOLATED_API_PORT = Number(process.env.E2E_ISOLATED_API_PORT ?? 4318);
-const ISOLATED_PORT = 5175;
+// Os E2E rodam SEMPRE contra backends ISOLADOS e DESCARTÁVEIS (banco temporário novo a cada execução; ver
+// scripts/e2e-isolated-backend.mjs). O `data-dev` (localhost:5173 + container novo-hiper-dev-api) é só do teste MANUAL
+// e nunca é tocado pelos testes automatizados.
+//
+// Três pilhas (backend + Vite), por precisarem de estados diferentes:
+//  • general: todos os specs comuns (estado cumulativo, asserções relativas); geração automática de pedidos DESLIGADA;
+//  • shop:    shop.isolated.spec.ts — roteiro serial com saldo/compras absolutos; geração desligada;
+//  • orders:  orders.isolated.spec.ts — roteiro serial da geração de pedidos pelo backend; geração LIGADA.
+const stacks = [
+  { name: 'general', api: 4318, web: 5175, env: { ORDER_AUTOGEN: 'off', ORDER_COOLDOWN_MS: '0' } },
+  { name: 'shop', api: 4319, web: 5176, env: { ORDER_AUTOGEN: 'off', ORDER_COOLDOWN_MS: '0' } },
+  { name: 'orders', api: 4320, web: 5177, env: { ORDER_AUTOGEN: 'on', ORDER_COOLDOWN_MS: '1000' } },
+] as const;
+const [general, shop, orders] = stacks;
+const base = (s: (typeof stacks)[number]) => ({ baseURL: `http://127.0.0.1:${s.web}` });
 
 export default defineConfig({
   testDir: './tests/e2e',
@@ -16,10 +23,10 @@ export default defineConfig({
   fullyParallel: false,
   workers: 1,
   reporter: [['list']],
-  globalSetup: './tests/e2e/globalSetup.ts',
   projects: [
-    { name: 'dev', testIgnore: /\.isolated\.spec\.ts$/, use: { baseURL: `http://127.0.0.1:${PORT}` } },
-    { name: 'isolated', testMatch: /\.isolated\.spec\.ts$/, use: { baseURL: `http://127.0.0.1:${ISOLATED_PORT}` } },
+    { name: 'general', testIgnore: /(shop|orders)\.isolated\.spec\.ts$/, use: base(general) },
+    { name: 'shop', testMatch: /shop\.isolated\.spec\.ts$/, use: base(shop) },
+    { name: 'orders', testMatch: /orders\.isolated\.spec\.ts$/, use: base(orders) },
   ],
   use: {
     launchOptions: {
@@ -30,28 +37,21 @@ export default defineConfig({
     viewport: { width: 480, height: 360 },
     trace: 'retain-on-failure',
   },
-  webServer: [
-    {
-      command: `npx vite --host 127.0.0.1 --port ${PORT} --strictPort`,
-      url: `http://127.0.0.1:${PORT}`,
-      reuseExistingServer: true,
-      timeout: 60_000,
-      env: { DEV_API_TARGET: API_TARGET },
-    },
+  webServer: stacks.flatMap((s) => [
     {
       // banco novo a cada execução (nunca reaproveitado): sem reuseExistingServer
       command: 'node scripts/e2e-isolated-backend.mjs',
-      url: `http://127.0.0.1:${ISOLATED_API_PORT}/api/health`,
+      url: `http://127.0.0.1:${s.api}/api/health`,
       reuseExistingServer: false,
       timeout: 120_000,
-      env: { E2E_ISOLATED_API_PORT: String(ISOLATED_API_PORT) },
+      env: { E2E_ISOLATED_API_PORT: String(s.api), ...s.env },
     },
     {
-      command: `npx vite --host 127.0.0.1 --port ${ISOLATED_PORT} --strictPort`,
-      url: `http://127.0.0.1:${ISOLATED_PORT}`,
+      command: `npx vite --host 127.0.0.1 --port ${s.web} --strictPort`,
+      url: `http://127.0.0.1:${s.web}`,
       reuseExistingServer: false,
       timeout: 60_000,
-      env: { DEV_API_TARGET: `http://127.0.0.1:${ISOLATED_API_PORT}` },
+      env: { DEV_API_TARGET: `http://127.0.0.1:${s.api}` },
     },
-  ],
+  ]),
 });

@@ -8,10 +8,14 @@ import type { StockHint } from '../logic/emptyState';
 export interface AdventureOrder {
   id: string;
   orderNumber: number;
+  /** Id estável do cliente (a frase de agradecimento vem do roster compartilhado). */
+  customerId: string;
   customerName: string;
   /** Destino congelado no pedido ("<região>/<casa>" ou id legado); o Phaser resolve pelo catálogo do mapa. */
   destinationId: string;
   plantName: string;
+  /** O estoque atual cobre o pedido? (calculado pelo backend; false = precisa repor estoque). */
+  deliverable: boolean;
   /** Valor do pedido em reais (o servidor é a autoridade; aqui é só para exibir). */
   total: number;
 }

@@ -9,7 +9,6 @@ import {
   saveStoredDestinations,
   getStoredOrders,
   saveStoredOrders,
-  createNewRandomOrder,
   REALISTIC_PLANT_PRESETS,
   formatPrice,
   getStoredCashRegister,
@@ -97,6 +96,9 @@ export default function App() {
           setMigrationResult(migRes);
           setIsMigrating(false);
 
+          // Evento: app aberto → pede ao backend uma verificação de novo pedido (ele decide; capacidade 1)
+          await api.ensureOrder().catch(() => null);
+
           // Carregar dados oficiais do SQLite
           try {
             const dbPlants = await api.getPlants();
@@ -167,18 +169,6 @@ export default function App() {
     }
   };
 
-  // Gatilho: o fluxo contínuo de pedidos reais é ativado com o primeiro registro real de planta do usuário
-  const [hasRealPlantTrigger, setHasRealPlantTrigger] = useState<boolean>(() => {
-    try {
-      const stored = localStorage.getItem('novo_hiper_real_plant_registered');
-      if (stored === 'true') return true;
-      const initialPlants = getStoredPlants();
-      return initialPlants.some((p) => !p.isExample && !p.id?.startsWith('plant_preset_') && !p.id?.startsWith('demo_'));
-    } catch {
-      return false;
-    }
-  });
-
   // Refs para manter dados atualizados no loop do timer sem recriar timers desnecessariamente
   const plantsRef = useRef(plants);
   const destinationsRef = useRef(destinations);
@@ -237,95 +227,8 @@ export default function App() {
     setSelectedPlant(null);
   };
 
-  // Função para receber novos pedidos (manualmente ou via timer)
-  const handleReceiveNewOrder = useCallback((isAutomatic = false): CustomerOrder | null => {
-    const currentPlants = plantsRef.current;
-    const currentDestinations = destinationsRef.current;
-    const currentOrders = ordersRef.current;
-
-    // Regra 1 e 3: Verificar se há plantas cadastradas pelo usuário
-    const userPlants = currentPlants.filter(
-      (p) => !p.isExample && !p.id?.startsWith('plant_preset_') && !p.id?.startsWith('demo_')
-    );
-    if (userPlants.length === 0) {
-      if (!isAutomatic) {
-        showToast('Cadastre plantas no catálogo do Novo Hiper antes de receber novos pedidos.');
-      }
-      return null;
-    }
-
-    // Regra 4 e 5: Verificar se há plantas com estoque disponível
-    const availablePlants = userPlants.filter((p) => (p.stock ?? 0) > 0);
-    if (availablePlants.length === 0) {
-      if (!isAutomatic) {
-        showToast('Não há plantas com estoque disponível para novos pedidos. Reabasteça no catálogo!');
-      }
-      return null;
-    }
-
-    // Regras 2, 6 e 7: Usar somente plantas cadastradas no catálogo, com preço e foto do cadastro, sem alterar estoque
-    const result = createNewRandomOrder(currentPlants, currentDestinations, currentOrders);
-    if (result.success && result.order) {
-      const newOrder = result.order;
-      sounds.playBellRing();
-      setOrders((prev) => [newOrder, ...prev]);
-
-      if (isBackendConnected) {
-        api.createOrder(newOrder).catch((err) => {
-          console.warn('[Backend SQLite]: Erro ao registrar pedido:', err);
-        });
-      }
-
-      if (isAutomatic) {
-        showToast(`🔔 Trim-trim! Novo pedido recebido de ${newOrder.customerName}: ${newOrder.plantName}!`);
-      } else {
-        showToast(`🔔 Novo pedido #${newOrder.orderNumber}! ${newOrder.customerName} encomendou ${newOrder.plantName}.`);
-      }
-
-      return newOrder;
-    } else {
-      if (!isAutomatic) {
-        if (result.reason === 'no_plants') {
-          showToast('Cadastre plantas no catálogo do Novo Hiper antes de receber novos pedidos.');
-        } else if (result.reason === 'no_stock') {
-          showToast('Não há plantas com estoque disponível para novos pedidos. Reabasteça no catálogo!');
-        } else {
-          showToast('Adicione destinos no mapa para receber pedidos.');
-        }
-      }
-      return null;
-    }
-  }, []);
-
-  // Timer ao longo do dia para receber pedidos de forma natural (ativado após o primeiro registro real de planta e somente autenticado)
-  useEffect(() => {
-    if (!hasRealPlantTrigger || !isAuthenticated) return;
-
-    let timeoutId: NodeJS.Timeout;
-
-    const scheduleNextOrder = () => {
-      // Intervalo natural entre 60 e 90 segundos para parecer fluxo vivo de clientes
-      const nextDelayMs = 60000 + Math.floor(Math.random() * 30000);
-
-      timeoutId = setTimeout(() => {
-        const pendingOrdersCount = ordersRef.current.filter((o) => o.status !== 'entregue').length;
-        const availablePlantsCount = plantsRef.current.filter((p) => (p.stock ?? 0) > 0).length;
-
-        // Limita o acúmulo a 5 pedidos pendentes e exige estoque disponível
-        if (pendingOrdersCount < 5 && availablePlantsCount > 0) {
-          handleReceiveNewOrder(true);
-        }
-
-        scheduleNextOrder();
-      }, nextDelayMs);
-    };
-
-    scheduleNextOrder();
-
-    return () => {
-      clearTimeout(timeoutId);
-    };
-  }, [hasRealPlantTrigger, isAuthenticated, handleReceiveNewOrder]);
+  // Pedidos automáticos nascem NO BACKEND (POST /api/orders/ensure decide: capacidade, estoque, cliente, planta, preço e número).
+  // Aqui o frontend só PEDE a verificação em eventos (abrir o app, salvar planta) e recarrega o que o servidor devolve.
 
   const handleSavePlant = (
     plantData: Omit<Plant, 'id' | 'createdAt'> & { id?: string; createdAt?: number }
@@ -355,9 +258,12 @@ export default function App() {
       showToast(`Planta "${plantData.name}" atualizada com sucesso.`);
 
       if (isBackendConnected) {
-        api.updatePlant(plantData.id, updatedPayload).catch((err) => {
-          console.warn('[Backend SQLite]: Erro ao atualizar planta:', err);
-        });
+        api
+          .updatePlant(plantData.id, updatedPayload)
+          .then(() => reloadBusinessData()) // reposição de estoque pode ter feito o servidor criar um pedido
+          .catch((err) => {
+            console.warn('[Backend SQLite]: Erro ao atualizar planta:', err);
+          });
       }
     } else {
       sounds.playSavePlant();
@@ -377,21 +283,12 @@ export default function App() {
       showToast(`Planta "${plantData.name}" cadastrada no catálogo do Novo Hiper.`);
 
       if (isBackendConnected) {
-        api.createPlant(newPlant).catch((err) => {
-          console.warn('[Backend SQLite]: Erro ao cadastrar planta:', err);
-        });
-      }
-
-      // Ativar o gatilho se este for o primeiro cadastro real de uma planta do usuário
-      if (!hasRealPlantTrigger) {
-        setHasRealPlantTrigger(true);
-        try {
-          localStorage.setItem('novo_hiper_real_plant_registered', 'true');
-        } catch {}
-        // O primeiro cliente descobre a nova planta e faz um pedido após 15 segundos!
-        setTimeout(() => {
-          handleReceiveNewOrder(true);
-        }, 15000);
+        api
+          .createPlant(newPlant)
+          .then(() => reloadBusinessData()) // a primeira planta faz o servidor criar o primeiro pedido
+          .catch((err) => {
+            console.warn('[Backend SQLite]: Erro ao cadastrar planta:', err);
+          });
       }
     }
   };
@@ -861,7 +758,6 @@ export default function App() {
             onUpdateOrderStatus={handleUpdateOrderStatus}
             onDispatchToMap={handleDispatchToMap}
             onStartGameDelivery={handleStartGameDelivery}
-            onReceiveNewOrder={handleReceiveNewOrder}
             onGoToCatalog={() => setActiveTab('catalogo')}
           />
         )}
@@ -890,7 +786,7 @@ export default function App() {
             cashRegister={cashRegister}
             initialOrder={activeOrder}
             onDeliverOrder={handleGameDelivery}
-            onCreateSimulationOrder={handleReceiveNewOrder}
+            onCreateSimulationOrder={() => undefined}
             onGoToCatalog={() => setActiveTab('catalogo')}
             onGoToOrders={() => setActiveTab('pedidos')}
             onUpdateCashRegister={(updated) => setCashRegister(updated)}

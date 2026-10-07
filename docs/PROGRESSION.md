@@ -1,6 +1,6 @@
 # Progressão da Novo Hiper
 
-> Estado: **Progressão 1** — base persistente. Nenhuma região, barreira ou nível existe ainda.
+> Estado: **Progressão 2A** — o servidor cria os pedidos e o bairro ganha moradores. Nenhuma região, barreira ou nível existe ainda.
 
 ## Princípio
 Internamente há **contadores e condições**; para o jogador a progressão deve aparecer como **acontecimentos concretos**: a loja muda, aparecem coisas e pessoas, o bairro reage, obras avançam, caminhos se abrem. **Nunca** como XP, nível ou checklist.
@@ -37,8 +37,46 @@ Internamente há **contadores e condições**; para o jogador a progressão deve
 ## Mensagens sem pedido (Aventura)
 Distingue, sem alarme: sem plantas ("Cadastre uma planta na Novo Hiper para começar."), plantas sem estoque ("As plantas estão sem estoque. Passe na Novo Hiper para conferir.") e estoque ok ("Sem entregas no momento").
 
+## Pedidos e moradores (Progressão 2A)
+
+### O backend é a autoridade dos pedidos
+- Pedido automático nasce **só** em `backend/orders/ensureOrder.ts` (`ensureOrder`), dentro de `BEGIN IMMEDIATE`: duas abas, retries ou 10 chamadas simultâneas nunca criam mais pedidos que a capacidade. O frontend **não** escolhe quando, cliente, planta, preço nem `order_number`.
+- Eventos só **pedem a verificação**: cadastrar planta, repor/editar estoque, finalizar entrega (no servidor) e abrir o app / entrar na Aventura sem pedido ativo (`POST /api/orders/ensure`). Resposta: `{ created: true, order }` ou `{ created: false, reason }` com `active_order | cooldown | no_plants | no_stock | no_customers | disabled`.
+- Ordem das regras: pedido ativo → recuo técnico → plantas → estoque livre → clientes desbloqueados → escolhas.
+- **Capacidade = 1 pedido ativo** (sem fila visível, sem escolher entre pedidos). Futuramente podem existir 2–3 e um "balcão" físico na Novo Hiper.
+- **Sem tempo como mecânica.** O recuo técnico (padrão **4 s**, `ORDER_COOLDOWN_MS`) existe só contra repetição/race/retry; não aparece, não é cronômetro, e após uma entrega o próximo pedido nasce na hora quando já cabe. Sem timer no frontend (o do `App.tsx`, o `setTimeout` de 15 s e a flag de `localStorage` foram removidos; o botão "Receber pedido" também).
+- `ORDER_AUTOGEN=off` desliga **só a criação** (as verificações e motivos continuam) e existe para ambientes de teste; produção/DEV usam o padrão (ligado).
+- **Preço congelado no pedido:** vem do `price` da planta **persistida** no momento da criação (o `unit_price` enviado pelo cliente é ignorado também em `POST /api/orders`, que continua por compatibilidade — **dívida técnica: remover**). Reprecificar a planta não muda pedidos antigos.
+- **`order_number`** atribuído pelo backend (sequencial), na transação de escrita. Sem migration.
+- **Estoque livre** = estoque − quantidade em pedidos abertos; nunca se cria pedido impossível. Se o dono baixar o estoque depois, o pedido **permanece** (`deliverable: false` no `GET /api/orders`), a Aventura avisa "falta estoque… reponha na Novo Hiper", a entrega recusa sem estoque negativo e **nenhum outro pedido** é criado para contornar.
+- **Destino congelado** em `orders.destination_id` (migration 004); pedidos antigos nunca são recalculados.
+
+### Roster de 8 moradores (`src/shared/roster.ts`, dados puros, fonte única)
+| Grupo (interno) | Cliente | Casa | Distância da Novo Hiper |
+|---|---|---|---|
+| Início | Dona Maria · Seu João · Ana | `house_021` · `house_019` · `house_017` | ~44 m · ~44 m · ~93 m |
+| Crescimento | Carlos · Dona Lúcia | `house_029` · `house_007` | ~93 m · ~131 m |
+| Bairro mais amplo | Floricultura · Seu Antônio · Bia | `house_026` · `house_034` · `house_039` | ~144 m · ~200 m · ~242 m |
+
+- Cada cliente tem id estável (os 5 primeiros mantêm os ids do app antigo), casa e **uma frase curta** de agradecimento (balão no feedback da entrega; não cita espécie). Sem diálogo, sem IA.
+- A expansão da clientela é também **espacial**: cada grupo mora, em média, mais longe. Os outros 10 destinos ficam para depois.
+- **"Floricultura" é cliente por compatibilidade provisória.** Futuramente deve ser reconsiderada como **estabelecimento físico** do mundo, e não como morador.
+
+### Desbloqueio permanente dos grupos (marcos `vizinhos_2` e `vizinhos_3`)
+Reaproveitam a tabela `milestones` (sem migration). Regras em `backend/progress/milestones.ts` (`NEIGHBORS`):
+- **Grupo 1:** sempre.
+- **Grupo 2 (`vizinhos_2`):** ≥ 1 melhoria instalada **e** ≥ 3 entregas.
+- **Grupo 3 (`vizinhos_3`):** ≥ 2 melhorias instaladas **e** ≥ 6 entregas **e** ≥ 2 plantas cadastradas historicamente (variedade entra aqui, sem checklist).
+Permanente: remover planta, gastar dinheiro ou perder a condição não "tranca" ninguém. Nada é anunciado: a descoberta é o primeiro pedido de Dona Lúcia, Seu Antônio ou Bia. `bairro_vivo` **não mudou** (10 entregas, 4 casas, 3 plantas, 3 melhorias) e a clientela crescente é o caminho natural até ele.
+
+### Clientes existentes
+- Pedido **antigo**: o `destination_id` congelado nunca muda.
+- Cliente que já tem destino **moderno** válido: preservado, nunca recalculado.
+- Cliente que só tem destino **legado** (ex.: `dest_vovo`): recebe **uma única vez** a casa do roster, na primeira vez que o servidor o apresenta (`introduceCustomer`, idempotente); pedidos **novos** usam essa casa, os antigos continuam na casa histórica.
+
 ## Direção futura (NÃO implementada)
 - `bairro_vivo` poderá iniciar um **acontecimento no mundo**: Novo Hiper cresce → o bairro começa a reagir → a obra da avenida progride → um NPC/comunicação indica que a obra está terminando → depois a barreira "EM OBRAS" é retirada → novo caminho/região fica acessível. Candidata: a barreira leste da avenida H2.
-- A **clientela crescerá** conforme o jogo progride. Os cinco clientes fixos atuais (`FICTIONAL_CUSTOMERS`) são **provisórios**.
-- **Dívida técnica:** o gerador de pedidos mora no **frontend** (`App.tsx`: timer de 60–90 s, no máximo 5 pendentes, só com o app aberto e autenticado). Antes de clientela dinâmica ou regiões ele deverá migrar para uma arquitetura **backend-authoritative**. Também: o backend aceita o `unit_price` enviado pelo cliente ao criar pedido; progressão deve preferir **contagens** a limiares de dinheiro por isso.
-- Variedade de plantas como progressão (clientela e melhorias que dependem do catálogo) e a claraboia ficam para depois.
+- Mais de um pedido ativo (2–3), escolha entre pedidos e um **balcão físico** na Novo Hiper onde o pedido novo "chega".
+- A clientela continuará crescendo com o jogo (os outros 10 destinos, preferências de cliente, pedidos com mais de uma unidade).
+- Variedade de plantas como progressão (e a claraboia) ficam para depois.
+- Remover `POST /api/orders` quando nada mais depender dele.

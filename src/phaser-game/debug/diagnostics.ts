@@ -46,6 +46,10 @@ export interface AdventureDiagnostics {
     hud: string;
     indicator: { meters: number; near: boolean; angle: number; text: string; arrowVisible: boolean } | null;
     lastReward: number | null;
+    /** Frase do cliente mostrada no feedback da última entrega. */
+    feedbackLine: string | null;
+    /** O pedido ativo pode ser entregue com o estoque atual? (null = sem pedido). */
+    deliverable: boolean | null;
     shop: {
       cashText: string | null;
       cashBalance: number | null;
