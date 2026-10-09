@@ -36,6 +36,9 @@ export class PlatformScene extends Phaser.Scene {
   private fallRespawns = 0;
   private facing: Facing = 'right';
   private currentAnim = '';
+  /** Câmera do HUD, sem zoom — texto/botão ficam no tamanho e posição corretos mesmo com a câmera principal "chapada". */
+  private uiCamera?: Phaser.Cameras.Scene2D.Camera;
+  private worldObjects: Phaser.GameObjects.GameObject[] = [];
 
   constructor() {
     super(SCENE_KEYS.Platform);
@@ -54,13 +57,21 @@ export class PlatformScene extends Phaser.Scene {
     this.lastSafeGround = { ...SPAWN_POINT };
     this.inputState = this.registry.get('inputState');
     this.registry.set('activeScene', 'platform');
+    this.worldObjects = [];
+
+    // Reentrada na cena (World <-> Platform): remove a câmera de HUD da visita anterior antes de criar outra.
+    if (this.uiCamera) {
+      this.cameras.remove(this.uiCamera);
+      this.uiCamera = undefined;
+    }
 
     this.physics.world.gravity.y = GRAVITY_Y;
     this.physics.world.setBounds(0, 0, LEVEL_WIDTH, LEVEL_HEIGHT);
     this.cameras.main.setBounds(0, 0, LEVEL_WIDTH, LEVEL_HEIGHT);
+    this.cameras.main.setZoom(PLATFORM.cameraZoom);
     this.cameras.main.fadeIn(200, 0, 0, 0);
 
-    this.add.rectangle(LEVEL_WIDTH / 2, LEVEL_HEIGHT / 2, LEVEL_WIDTH, LEVEL_HEIGHT, 0x0c4a6e);
+    this.worldObjects.push(this.add.rectangle(LEVEL_WIDTH / 2, LEVEL_HEIGHT / 2, LEVEL_WIDTH, LEVEL_HEIGHT, 0x0c4a6e));
 
     const ground = this.physics.add.staticGroup();
 
@@ -69,6 +80,7 @@ export class PlatformScene extends Phaser.Scene {
     groundSegments.forEach((seg) => {
       const block = this.add.rectangle(seg.x + seg.width / 2, GROUND_Y + 40, seg.width, 80, 0x44403c);
       ground.add(block);
+      this.worldObjects.push(block);
     });
 
     createBernardoPlatformAnimations(this);
@@ -81,6 +93,7 @@ export class PlatformScene extends Phaser.Scene {
       .setOffset(BERNARDO_BODY_OFFSET.x, BERNARDO_BODY_OFFSET.y);
     this.player.setCollideWorldBounds(false);
     this.player.setDepth(10); // à frente da Casa do Cliente e do cenário
+    this.worldObjects.push(this.player);
 
     this.physics.add.collider(this.player, ground, () => {
       const body = this.player.body as Phaser.Physics.Arcade.Body;
@@ -95,18 +108,24 @@ export class PlatformScene extends Phaser.Scene {
     // Destino provisório — marcador tipo "casa do cliente"
     const goalX = PLATFORM_GOAL.x;
     this.goalPosition = { ...PLATFORM_GOAL };
-    this.add.rectangle(goalX, GROUND_Y - 40, 140, 100, 0xfde68a).setStrokeStyle(4, 0x1c1917);
-    this.add.triangle(goalX, GROUND_Y - 130, -80, 40, 80, 40, 0, -40, 0xb91c1c).setStrokeStyle(4, 0x1c1917);
-    this.add
-      .text(goalX, GROUND_Y - 200, 'Casa do Cliente', {
-        fontSize: '14px',
-        color: '#fff7ed',
-        backgroundColor: '#1c1917',
-        padding: { x: 6, y: 3 },
-      })
-      .setOrigin(0.5);
+    this.worldObjects.push(
+      this.add.rectangle(goalX, GROUND_Y - 40, 140, 100, 0xfde68a).setStrokeStyle(4, 0x1c1917)
+    );
+    this.worldObjects.push(
+      this.add.triangle(goalX, GROUND_Y - 130, -80, 40, 80, 40, 0, -40, 0xb91c1c).setStrokeStyle(4, 0x1c1917)
+    );
+    this.worldObjects.push(
+      this.add
+        .text(goalX, GROUND_Y - 200, 'Casa do Cliente', {
+          fontSize: '14px',
+          color: '#fff7ed',
+          backgroundColor: '#1c1917',
+          padding: { x: 6, y: 3 },
+        })
+        .setOrigin(0.5)
+    );
 
-    this.add
+    const instructions = this.add
       .text(16, 16, 'Esquerda/Direita para andar • Espaço para pular', {
         fontSize: '14px',
         color: '#fafaf9',
@@ -114,6 +133,15 @@ export class PlatformScene extends Phaser.Scene {
         padding: { x: 8, y: 6 },
       })
       .setScrollFactor(0);
+
+    // Câmera de HUD: renderiza só o que está FORA de worldObjects (texto/botões), sem o zoom da câmera principal.
+    this.cameras.main.ignore(instructions);
+    this.uiCamera = this.cameras.add(0, 0, this.cameras.main.width, this.cameras.main.height);
+    this.uiCamera.ignore(this.worldObjects);
+
+    const handleResize = (size: Phaser.Structs.Size) => this.uiCamera?.setSize(size.width, size.height);
+    this.scale.on('resize', handleResize);
+    this.events.once('shutdown', () => this.scale.off('resize', handleResize));
   }
 
   /** Estado exposto à interface de diagnóstico (só consumida em dev/teste). */
@@ -266,6 +294,8 @@ export class PlatformScene extends Phaser.Scene {
       .setScrollFactor(0)
       .setInteractive({ useHandCursor: true })
       .on('pointerdown', () => returnToWorld());
+
+    this.cameras.main.ignore([title, hint, button]);
 
     // A confirmação aparece DEPOIS da comemoração (que fica visível, sem texto por cima).
     // Espaço/Enter já valem desde confirmReadyAt, independentemente de estar visível.

@@ -13,6 +13,8 @@ export const PLATFORM = {
   firstSegmentWidth: 760,
   middleSegmentWidth: 720,
   returnInputDelayMs: 600,
+  /** Zoom da câmera na fase de plataforma — visual "chapado" estilo SNES (Bernardo ocupa mais tela). */
+  cameraZoom: 2,
 } as const;
 
 export const PLATFORM_FALL_LIMIT_Y = PLATFORM.levelHeight + 200;
