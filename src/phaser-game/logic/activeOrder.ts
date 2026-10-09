@@ -30,5 +30,6 @@ export function toAdventureOrder(o: CustomerOrder): AdventureOrder {
     plantName: o.plantName,
     deliverable: o.deliverable !== false,
     total: o.totalPrice,
+    status: o.status,
   };
 }

@@ -42,7 +42,7 @@ describe('pedido ativo (status elegíveis EXPLÍCITOS)', () => {
   });
   it('toAdventureOrder leva só o necessário para a tela (sem endereço do cliente)', () => {
     const a = toAdventureOrder(order({ customerAddress: 'Rua Real, 142', totalPrice: 22.5, destinationId: 'bairro1/house_007' }));
-    expect(a).toEqual({ id: 'o1', orderNumber: 101, customerId: 'c', customerName: 'Ana', destinationId: 'bairro1/house_007', plantName: 'Samambaia', deliverable: true, total: 22.5 });
+    expect(a).toEqual({ id: 'o1', orderNumber: 101, customerId: 'c', customerName: 'Ana', destinationId: 'bairro1/house_007', plantName: 'Samambaia', deliverable: true, total: 22.5, status: 'recebido' });
     expect(JSON.stringify(a)).not.toContain('Rua Real');
   });
 });
@@ -74,7 +74,7 @@ describe('formatBRL', () => {
 });
 
 describe('AdventureBridge', () => {
-  const o: AdventureOrder = { id: 'o1', orderNumber: 101, customerId: 'c1', customerName: 'Ana', destinationId: 'dest_e2e', plantName: 'X', deliverable: true, total: 10 };
+  const o: AdventureOrder = { id: 'o1', orderNumber: 101, customerId: 'c1', customerName: 'Ana', destinationId: 'dest_e2e', plantName: 'X', deliverable: true, total: 10, status: 'pronto' };
 
   it('setSnapshot mescla e notifica; unsubscribe para de notificar', () => {
     const b = new AdventureBridge();

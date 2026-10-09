@@ -2,7 +2,7 @@ import { expect, Page, test } from '@playwright/test';
 import { CUSTOMER_SPOT } from '../../src/phaser-game/config/worldConfig';
 import { DELIVERY_ERROR_MS, DELIVERY_FEEDBACK_MS } from '../../src/phaser-game/bridge/adventureBridge';
 import { formatBRL } from '../../src/phaser-game/logic/format';
-import { login, openAdventure, state, teleport, walkRoute } from './helpers';
+import { login, openAdventure, pickUpActiveOrder, state, teleport, walkRoute } from './helpers';
 import { ROUTE_TO_CUSTOMER } from './routes';
 import { closeSuiteOrders, createSuiteOrder, suiteId } from './suiteData';
 
@@ -75,6 +75,10 @@ test.describe('vertical slice: pedido real → mapa → cliente → entrega → 
     await page.waitForTimeout(600);
     expect(calls.start).toBe(0);
 
+    // pega a planta na Novo Hiper antes de poder entregar (único POST /deliveries/start do teste;
+    // o handler de entrega reaproveita esse id em vez de chamar start de novo)
+    await pickUpActiveOrder(page);
+
     await goToCustomer(page, true); // percorre as ruas até a casa do cliente
     expect((await delivery(page)).promptVisible).toBe(true);
 
@@ -112,7 +116,9 @@ test.describe('vertical slice: pedido real → mapa → cliente → entrega → 
     d = await delivery(page);
     expect(d.customerName).toBe('Seu João E2E');
     expect(d.lastReward).toBeNull();
-    expect(d.hud).toContain('Seu João E2E');
+    // ainda não retirado na loja: o HUD orienta a passar na Novo Hiper antes (sem o nome do cliente, por ora)
+    expect(d.hud).toContain('pegue');
+    expect(d.hud).toContain('Novo Hiper');
 
     // o App recarregou estoque/caixa: o caixa do cabeçalho mostra o saldo novo
     const header = (await page.locator('#btn-open-cash-mobile, #btn-open-cash-desktop').locator('visible=true').first().innerText()).replace(/\s/g, ' ');
@@ -158,6 +164,7 @@ test.describe('vertical slice: pedido real → mapa → cliente → entrega → 
     const cashBefore = await cash(page);
     await openAdventure(page);
     await waitDelivery(page, `d.activeOrderId === ${JSON.stringify(order.id)} && d.deliverable === true`);
+    await pickUpActiveOrder(page); // estoque ainda suficiente neste momento
     await goToCustomer(page);
 
     // o dono baixa o estoque à mão logo antes de Bernardo entregar (a tela ainda não percebeu): o SERVIDOR recusa
@@ -194,6 +201,7 @@ test.describe('botão touch', () => {
     const order = await createOrder(page, plant.id, 1);
     await openAdventure(page);
     await waitDelivery(page, `d.activeOrderId === ${JSON.stringify(order.id)}`);
+    await pickUpActiveOrder(page);
     await goToCustomer(page);
 
     const button = page.getByRole('button', { name: 'Interagir' });

@@ -20,6 +20,12 @@ import { hintFromReason, StockHint } from './logic/emptyState';
 export function useDeliveryFlow(bridge: AdventureBridge, onDataChanged?: () => void | Promise<void>) {
   const onDataChangedRef = useRef(onDataChanged);
   onDataChangedRef.current = onDataChanged;
+  const pickingRef = useRef(false); // trava síncrona: toque duplo na bancada não dispara duas chamadas
+  // Id da entrega já iniciada na retirada (pickup), para não chamar startDelivery de novo ao entregar (ele é
+  // idempotente, mas chamar de novo seria uma requisição à toa). Se for perdido (ex.: reload entre pegar e
+  // entregar), o handler de 'deliver' se recupera chamando startDelivery de novo — devolve a entrega já
+  // existente, porque order.status já está 'pronto'.
+  const deliveryIdByOrder = useRef(new Map<string, string>());
 
   useEffect(() => {
     let alive = true;
@@ -79,16 +85,41 @@ export function useDeliveryFlow(bridge: AdventureBridge, onDataChanged?: () => v
     }, ORDER_POLL_MS);
 
     const offIntent = bridge.onIntent(async (intent) => {
+      if (intent.type === 'pickup') {
+        // Pegar o vaso na bancada de preparo (NovoHiperInteriorScene): inicia a entrega no backend (idempotente —
+        // se Bernardo tentar pegar de novo, só devolve a entrega já em andamento) e republica o pedido com o novo status.
+        if (pickingRef.current) return;
+        const snap = bridge.getSnapshot();
+        const order = snap.activeOrder;
+        if (!order || snap.phase !== 'idle' || order.id !== intent.orderId || order.status === 'pronto') return;
+        pickingRef.current = true;
+        try {
+          const started = await api.startDelivery(order.id);
+          deliveryIdByOrder.current.set(order.id, started.id);
+          const { order: refreshed, stockHint } = await loadActive();
+          if (alive) bridge.setSnapshot({ activeOrder: refreshed, stockHint });
+        } catch (err) {
+          if (alive) {
+            const raw = err instanceof Error ? err.message : '';
+            bridge.setSnapshot({ message: raw ? raw.slice(0, 140) : 'Não foi possível pegar a planta agora.' });
+          }
+        } finally {
+          pickingRef.current = false;
+        }
+        return;
+      }
       if (intent.type !== 'deliver') return; // loja/instalação são tratadas por useShopFlow
       const snap = bridge.getSnapshot();
       const order = snap.activeOrder;
-      // trava: só uma entrega por vez, e só do pedido que está na tela
-      if (!order || snap.phase !== 'idle' || order.id !== intent.orderId) return;
+      // trava: só uma entrega por vez, só do pedido que está na tela, e só depois de pegar a planta na loja
+      if (!order || snap.phase !== 'idle' || order.id !== intent.orderId || order.status !== 'pronto') return;
 
       bridge.setSnapshot({ phase: 'delivering', message: null });
       try {
-        const delivery = await api.startDelivery(order.id);
-        const result = await api.finishDelivery(delivery.id);
+        let deliveryId = deliveryIdByOrder.current.get(order.id);
+        if (!deliveryId) deliveryId = (await api.startDelivery(order.id)).id;
+        const result = await api.finishDelivery(deliveryId);
+        deliveryIdByOrder.current.delete(order.id);
         const reward = Number(result?.order?.total ?? order.total);
 
         // próximo pedido (já sem o entregue), mas só é PUBLICADO depois do feedback

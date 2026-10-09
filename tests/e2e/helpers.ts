@@ -1,6 +1,8 @@
 import { expect, Page } from '@playwright/test';
 import { isolateSuiteOrders } from './suiteData';
 import { PLATFORM, PLATFORM_GOAL, getGaps } from '../../src/phaser-game/config/platformConfig';
+import { INTERIOR_EXIT, PREP_BENCH } from '../../src/phaser-game/config/interiorMap';
+import { WORLD_MAP } from '../../src/phaser-game/config/worldMap';
 import { ROUTE_TO_ENTRANCE } from './routes';
 import type { AdventureDiagnostics } from '../../src/phaser-game/debug/diagnostics';
 
@@ -46,7 +48,7 @@ export async function waitForPlayer(page: Page) {
   await page.waitForTimeout(400);
 }
 
-export async function waitForScene(page: Page, scene: 'world' | 'platform') {
+export async function waitForScene(page: Page, scene: 'world' | 'platform' | 'interior') {
   await page.waitForFunction((sc) => window.__NH_ADVENTURE__?.getState().scene === sc, scene);
   await waitForPlayer(page);
 }
@@ -189,6 +191,32 @@ export async function enterPlatform(page: Page) {
   // do spawn até a zona de entrada, pelas ruas (o bairro tem prédios no caminho)
   await walkRoute(page, ROUTE_TO_ENTRANCE, 10);
   await waitForScene(page, 'platform');
+}
+
+/** Entra no interior da Novo Hiper (porta leva automaticamente — sem precisar de tecla de interação). */
+export async function enterStore(page: Page) {
+  await teleport(page, WORLD_MAP.shop.interact.x, WORLD_MAP.shop.interact.y);
+  await waitForScene(page, 'interior');
+}
+
+/** Sai do interior de volta para o bairro, em frente à porta da Novo Hiper. */
+export async function leaveStore(page: Page) {
+  await teleport(page, INTERIOR_EXIT.x, INTERIOR_EXIT.y);
+  await waitForScene(page, 'world');
+}
+
+/**
+ * Pega a planta do pedido ativo na bancada de preparo da Novo Hiper — necessário antes de poder entregar
+ * (ver NovoHiperInteriorScene). Entra na loja, pega, e volta para o bairro no mesmo lugar de onde saiu
+ * (STORE_RETURN_POINT = WORLD_MAP.spawn), então rotas que partem do spawn continuam válidas depois.
+ */
+export async function pickUpActiveOrder(page: Page) {
+  await enterStore(page);
+  await teleport(page, PREP_BENCH.interact.x, PREP_BENCH.interact.y);
+  await page.waitForFunction(() => Boolean(window.__NH_ADVENTURE__?.getState().delivery?.interior?.canPickup));
+  await page.keyboard.press('KeyE');
+  await page.waitForFunction(() => Boolean(window.__NH_ADVENTURE__?.getState().delivery?.interior?.carrying));
+  await leaveStore(page);
 }
 
 export async function teleportToGoal(page: Page) {

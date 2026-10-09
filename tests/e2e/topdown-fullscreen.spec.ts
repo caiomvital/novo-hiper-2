@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { closeSuiteOrders, createSuiteOrder, suiteId } from './suiteData';
-import { login, openAdventure, state, holdKeys } from './helpers';
+import { login, openAdventure, state, holdKeys, pickUpActiveOrder } from './helpers';
 
 const sprite = async (page: import('@playwright/test').Page) => (await state(page)).sprite!;
 const waitAnim = (page: import('@playwright/test').Page, anim: string) =>
@@ -82,6 +82,7 @@ test.describe('fullscreen no PC', () => {
     await openAdventure(page);
     await page.waitForFunction(`window.__NH_ADVENTURE__?.getState().delivery?.activeOrderId`);
     const activeBefore = (await state(page)).delivery!.activeOrderId;
+    await pickUpActiveOrder(page); // HUD mostra "Entrega... para <cliente>" só depois de pegar a planta
     await holdKeys(page, ['ArrowRight', 'ArrowDown'], 500); // posição qualquer, parado depois
     await page.waitForTimeout(400);
 

@@ -2,7 +2,7 @@ import type Phaser from 'phaser';
 import type { InputState } from '../input/InputState';
 
 export interface AdventureDiagnostics {
-  scene: 'world' | 'platform' | null;
+  scene: 'world' | 'platform' | 'interior' | null;
   player: { x: number; y: number } | null;
   transitioning: boolean;
   goalReached: boolean;
@@ -62,6 +62,16 @@ export interface AdventureDiagnostics {
       /** Ids das melhorias com visual presente na cena. */
       visuals: string[];
     };
+    /** Só na NovoHiperInteriorScene: proximidade dos móveis, se há planta para pegar e se a porta está rearmada. */
+    interior?: {
+      nearShelf: boolean;
+      nearStock: boolean;
+      nearCounter: boolean;
+      nearPrep: boolean;
+      canPickup: boolean;
+      carrying: boolean;
+      exitArmed: boolean;
+    } | null;
   } | null;
 }
 
@@ -89,10 +99,11 @@ export function installDiagnostics(game: Phaser.Game, _input: InputState, contai
   if (!import.meta.env.DEV) return () => {};
 
   liveGameCount++;
+  const SCENE_KEY_BY_MODE = { world: 'WorldScene', platform: 'PlatformScene', interior: 'NovoHiperInteriorScene' } as const;
   const activeScene = () => {
-    const key = game.registry.get('activeScene') as 'world' | 'platform' | undefined;
+    const key = game.registry.get('activeScene') as keyof typeof SCENE_KEY_BY_MODE | undefined;
     if (!key) return null;
-    return game.scene.getScene(key === 'world' ? 'WorldScene' : 'PlatformScene') as unknown as {
+    return game.scene.getScene(SCENE_KEY_BY_MODE[key]) as unknown as {
       getDebugState(): Omit<AdventureDiagnostics, 'scene' | 'canvasCount'>;
       teleportPlayer(x: number, y: number): void;
     } | null;
@@ -103,7 +114,7 @@ export function installDiagnostics(game: Phaser.Game, _input: InputState, contai
       const scene = activeScene();
       const base = scene?.getDebugState();
       return {
-        scene: (game.registry.get('activeScene') as 'world' | 'platform' | undefined) ?? null,
+        scene: (game.registry.get('activeScene') as 'world' | 'platform' | 'interior' | undefined) ?? null,
         player: base?.player ?? null,
         transitioning: base?.transitioning ?? false,
         goalReached: base?.goalReached ?? false,

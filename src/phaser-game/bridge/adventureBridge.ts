@@ -4,6 +4,7 @@
  *  - Phaser → React: INTENÇÃO ('deliver'). O Phaser nunca chama a API; quem valida e chama é o React.
  */
 import type { StockHint } from '../logic/emptyState';
+import type { OrderStatus } from '../../types';
 
 export interface AdventureOrder {
   id: string;
@@ -18,6 +19,11 @@ export interface AdventureOrder {
   deliverable: boolean;
   /** Valor do pedido em reais (o servidor é a autoridade; aqui é só para exibir). */
   total: number;
+  /**
+   * Status real do pedido no backend. 'pronto' É a entrega já iniciada (POST /deliveries/start já foi chamado) —
+   * é o que o jogo usa para saber se Bernardo já pegou a planta na loja (ver NovoHiperInteriorScene/WorldScene).
+   */
+  status: OrderStatus;
 }
 
 export type DeliveryPhase = 'idle' | 'delivering' | 'done' | 'error';
@@ -47,14 +53,25 @@ export interface DeliverIntent {
   type: 'deliver';
   orderId: string;
 }
-/** Bernardo interagiu na porta da Loja de Utilidades / da Novo Hiper: o React abre o painel correspondente. */
+/** Bernardo interagiu na bancada de preparo, dentro da Novo Hiper: pega o vaso do pedido ativo (POST /deliveries/start). */
+export interface PickupIntent {
+  type: 'pickup';
+  orderId: string;
+}
+/** Bernardo interagiu na Loja de Utilidades: o React abre o painel de compras. */
 export interface OpenShopIntent {
   type: 'openShop';
 }
+/** Bernardo interagiu no balcão da Novo Hiper (dentro do interior) com melhoria pendente: o React abre o painel de instalação. */
 export interface OpenInstallIntent {
   type: 'openInstall';
 }
-export type AdventureIntent = DeliverIntent | OpenShopIntent | OpenInstallIntent;
+/** Bernardo interagiu com um móvel do interior que abre uma tela React já existente (balcão → pedidos, prateleira/estoque → catálogo). */
+export interface NavigateIntent {
+  type: 'navigate';
+  tab: 'pedidos' | 'catalogo';
+}
+export type AdventureIntent = DeliverIntent | PickupIntent | OpenShopIntent | OpenInstallIntent | NavigateIntent;
 
 export const DELIVERY_FEEDBACK_MS = 3000;
 export const DELIVERY_ERROR_MS = 3500;
@@ -103,7 +120,7 @@ export class AdventureBridge {
   emitIntent(intent: AdventureIntent): boolean {
     const s = this.snapshot;
     if (s.phase !== 'idle' || s.uiOpen) return false;
-    if (intent.type === 'deliver' && (!s.activeOrder || s.activeOrder.id !== intent.orderId)) return false;
+    if ((intent.type === 'deliver' || intent.type === 'pickup') && (!s.activeOrder || s.activeOrder.id !== intent.orderId)) return false;
     this.intentHandlers.forEach((h) => h(intent));
     return true;
   }

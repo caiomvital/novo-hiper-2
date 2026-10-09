@@ -1,16 +1,17 @@
 import { expect, Page, test } from '@playwright/test';
 import { CUSTOMER_SPOT } from '../../src/phaser-game/config/worldConfig';
 import { WORLD_MAP } from '../../src/phaser-game/config/worldMap';
+import { COUNTER } from '../../src/phaser-game/config/interiorMap';
 import { BANCO, JARDINEIRAS, PLACA_MADEIRA } from '../../src/shared/shop';
 import { cashBalance, earn, purchaseDebits, shopState } from './isolatedData';
-import { leaveAdventure, login, openAdventure, state, teleport } from './helpers';
+import { enterStore, leaveAdventure, leaveStore, login, openAdventure, pickUpActiveOrder, state, teleport } from './helpers';
 import { closeSuiteOrders, createSuiteOrder, suiteId } from './suiteData';
 
 // Roda no backend ISOLADO (banco temporário descartável): o estado é CUMULATIVO entre os passos, como numa partida
 // (sem saldo → entrega → compra → instalação → persistência), e nunca toca o data-dev do teste manual.
 test.describe.configure({ mode: 'serial' });
 
-const { utilities, shop } = WORLD_MAP;
+const { utilities } = WORLD_MAP;
 const delivery = async (page: Page) => (await state(page)).delivery!;
 const waitDelivery = (page: Page, pred: string, timeout = 30_000) =>
   page.waitForFunction(`(() => { const d = window.__NH_ADVENTURE__?.getState().delivery; return Boolean(d && (${pred})); })()`, null, { timeout });
@@ -77,6 +78,9 @@ test('2. entrega real: o HUD "Caixa" acompanha o saldo do backend depois de entr
   await waitDelivery(page, `d.activeOrderId === ${JSON.stringify(order.id)}`);
   expect(await hudCash(page)).toMatch(BRL('30,00'));
 
+  // pega a planta na bancada de preparo da Novo Hiper antes de poder entregar
+  await pickUpActiveOrder(page);
+
   await teleport(page, CUSTOMER_SPOT.x, CUSTOMER_SPOT.y + 20);
   await waitDelivery(page, 'd.near');
   await page.keyboard.press('KeyE');
@@ -129,11 +133,14 @@ test('4. voltar à Novo Hiper, instalar a placa (fachada muda), sair/entrar e co
   await waitDelivery(page, 'd.shop.pendingUpgrades.length === 1');
   expect((await delivery(page)).shop.placaVisible).toBe(false);
 
-  // longe da porta da Novo Hiper não há interação; perto dela aparece a de instalação
+  // longe da porta da Novo Hiper, nada acontece; perto dela, Bernardo entra automaticamente no interior
   await teleport(page, WORLD_MAP.spawn.x, WORLD_MAP.spawn.y);
   await page.waitForTimeout(500);
-  expect((await delivery(page)).shop.nearShop).toBe(false);
-  await teleport(page, shop.interact.x, shop.interact.y);
+  expect((await state(page)).scene).toBe('world');
+  await enterStore(page);
+
+  // no balcão, com uma melhoria comprada aguardando: a interação é instalar (em vez de "ver pedidos")
+  await teleport(page, COUNTER.interact.x, COUNTER.interact.y);
   await waitDelivery(page, 'd.shop.nearShop && d.promptVisible');
   await page.keyboard.press('KeyE');
   await expect(page.locator('#shop-panel')).toBeVisible();
@@ -141,13 +148,17 @@ test('4. voltar à Novo Hiper, instalar a placa (fachada muda), sair/entrar e co
 
   await page.locator('#btn-shop-install-' + PLACA_MADEIRA).click();
   await expect(page.locator('#shop-panel')).toHaveCount(0);
-  await waitDelivery(page, "d.shop.placaVisible && d.shop.installedUpgrades.includes('placa_madeira') && !d.shop.uiOpen");
+  await waitDelivery(page, "d.shop.installedUpgrades.includes('placa_madeira') && !d.shop.uiOpen");
   expect((await shopState(page)).upgrades[0].state).toBe('installed');
   expect(await cashBalance(page)).toBe(15); // instalar não cobra nada
 
-  // não há mais nada para instalar: a interação some
+  // não há mais nada para instalar: a interação do balcão vira "ver pedidos"
   await page.waitForTimeout(500);
   expect((await delivery(page)).shop.nearShop).toBe(false);
+
+  // sai da loja: a fachada (do lado de fora) já mostra a placa instalada
+  await leaveStore(page);
+  await waitDelivery(page, 'd.shop.placaVisible');
 
   // sair da Aventura e voltar: a placa continua lá (estado vem do backend)
   await leaveAdventure(page);
@@ -234,7 +245,8 @@ test('7. compra do banco; volta à Novo Hiper e instala as duas; jardineiras e b
   expect((await delivery(page)).shop.visuals).toEqual([PLACA_MADEIRA]); // nada novo na fachada ainda
 
   // na Novo Hiper: as duas pendentes aparecem; instalar uma mantém o painel aberto até acabar
-  await teleport(page, shop.interact.x, shop.interact.y);
+  await enterStore(page);
+  await teleport(page, COUNTER.interact.x, COUNTER.interact.y);
   await waitDelivery(page, 'd.shop.nearShop && d.promptVisible');
   await page.keyboard.press('KeyE');
   await expect(page.locator('#btn-shop-install-' + JARDINEIRAS)).toBeVisible();
@@ -243,13 +255,17 @@ test('7. compra do banco; volta à Novo Hiper e instala as duas; jardineiras e b
   await page.locator('#btn-shop-install-' + JARDINEIRAS).click();
   await expect(page.locator('#shop-message')).toContainText(/ainda há melhorias/i);
   await expect(page.locator('#shop-panel')).toBeVisible();
-  await waitDelivery(page, "d.shop.visuals.includes('jardineiras') && !d.shop.visuals.includes('banco')");
+  await waitDelivery(page, "d.shop.installedUpgrades.includes('jardineiras') && !d.shop.installedUpgrades.includes('banco')");
 
   await page.locator('#btn-shop-install-' + BANCO).click();
   await expect(page.locator('#shop-panel')).toHaveCount(0);
-  await waitDelivery(page, "d.shop.visuals.includes('jardineiras') && d.shop.visuals.includes('banco') && !d.shop.uiOpen");
-  expect(new Set((await delivery(page)).shop.visuals)).toEqual(new Set([PLACA_MADEIRA, JARDINEIRAS, BANCO]));
+  await waitDelivery(page, "d.shop.installedUpgrades.includes('jardineiras') && d.shop.installedUpgrades.includes('banco') && !d.shop.uiOpen");
   expect(await cashBalance(page)).toBe(5); // instalar não cobra
+
+  // sai da loja: a fachada (do lado de fora) já mostra as duas novas melhorias
+  await leaveStore(page);
+  await waitDelivery(page, "d.shop.visuals.includes('jardineiras') && d.shop.visuals.includes('banco')");
+  expect(new Set((await delivery(page)).shop.visuals)).toEqual(new Set([PLACA_MADEIRA, JARDINEIRAS, BANCO]));
 
   // reentrada: as três já aparecem direto
   await leaveAdventure(page);

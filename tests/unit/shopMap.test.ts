@@ -66,7 +66,7 @@ describe('ponte: intents da loja', () => {
     const b = new AdventureBridge();
     const handler = vi.fn();
     b.onIntent(handler);
-    b.setSnapshot({ loaded: true, activeOrder: { id: 'o1', orderNumber: 1, customerId: 'c1', customerName: 'A', destinationId: 'dest_e2e', plantName: 'X', deliverable: true, total: 1 } });
+    b.setSnapshot({ loaded: true, activeOrder: { id: 'o1', orderNumber: 1, customerId: 'c1', customerName: 'A', destinationId: 'dest_e2e', plantName: 'X', deliverable: true, total: 1, status: 'pronto' } });
     expect(b.emitIntent({ type: 'deliver', orderId: 'o1' })).toBe(true);
     b.setSnapshot({ uiOpen: true });
     expect(b.emitIntent({ type: 'deliver', orderId: 'o1' })).toBe(false);

@@ -2,7 +2,7 @@ import { expect, Page, test } from '@playwright/test';
 import { HOUSE_CATALOG } from '../../src/phaser-game/config/houseCatalog';
 import { PLACA_MADEIRA } from '../../src/shared/shop';
 import { ROSTER, rosterById, thanksFor } from '../../src/shared/roster';
-import { leaveAdventure, login, openAdventure, state, teleport } from './helpers';
+import { leaveAdventure, login, openAdventure, pickUpActiveOrder, state, teleport } from './helpers';
 import { suiteId } from './suiteData';
 
 // Backend ISOLADO com a geração automática LIGADA e banco novo. Roteiro serial (estado cumulativo, como uma partida):
@@ -103,6 +103,7 @@ test('4. entregar: feedback com a frase do cliente, caixa recebe o preço da pla
   await openAdventure(page);
   await waitDelivery(page, `d.activeOrderId === ${JSON.stringify(firstOrderId)}`);
   const stockBefore = (await api(page, 'get', `/api/plants/${plantId}`)).body.stock_quantity;
+  await pickUpActiveOrder(page); // pega a planta na Novo Hiper antes de poder entregar
   const target = houseOf(firstCustomer).deliveryPoint;
   await teleport(page, target.x, target.y + 20);
   await waitDelivery(page, 'd.near');

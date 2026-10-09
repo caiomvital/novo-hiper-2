@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { WorldScene } from './scenes/WorldScene';
 import { PlatformScene } from './scenes/PlatformScene';
+import { NovoHiperInteriorScene } from './scenes/NovoHiperInteriorScene';
 
 export function createGameConfig(parent: HTMLElement): Phaser.Types.Core.GameConfig {
   return {
@@ -21,6 +22,6 @@ export function createGameConfig(parent: HTMLElement): Phaser.Types.Core.GameCon
         debug: false,
       },
     },
-    scene: [WorldScene, PlatformScene],
+    scene: [WorldScene, PlatformScene, NovoHiperInteriorScene],
   };
 }

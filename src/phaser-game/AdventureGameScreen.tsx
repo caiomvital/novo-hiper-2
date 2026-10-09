@@ -15,11 +15,19 @@ interface AdventureGameScreenProps {
   onExit: () => void;
   /** Chamado depois de uma entrega concluída, para o App recarregar pedidos, estoque e caixa. */
   onDataChanged?: () => void | Promise<void>;
+  /** Bernardo interagiu com um móvel do interior (balcão/prateleira/estoque): troca para a aba React correspondente. */
+  onNavigateTab?: (tab: 'pedidos' | 'catalogo') => void;
 }
 
-type SceneMode = 'world' | 'platform';
+type SceneMode = 'world' | 'platform' | 'interior';
 
-export const AdventureGameScreen: React.FC<AdventureGameScreenProps> = ({ onExit, onDataChanged }) => {
+const SCENE_SUBTITLE: Record<SceneMode, string> = {
+  world: 'Mapa do bairro — explore no seu ritmo',
+  platform: 'Trecho de plataforma — atravesse até o destino',
+  interior: 'Dentro da Novo Hiper — fale com o balcão, as prateleiras e o estoque',
+};
+
+export const AdventureGameScreen: React.FC<AdventureGameScreenProps> = ({ onExit, onDataChanged, onNavigateTab }) => {
   const rootRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const gameRef = useRef<{ scale: { refresh: () => void } } | null>(null);
@@ -28,6 +36,15 @@ export const AdventureGameScreen: React.FC<AdventureGameScreenProps> = ({ onExit
   useDeliveryFlow(bridgeRef.current, onDataChanged);
   const shopFlow = useShopFlow(bridgeRef.current, inputStateRef.current, onDataChanged);
   const [activeMode, setActiveMode] = useState<SceneMode>('world');
+
+  // Balcão/prateleira/estoque do interior pedem pra abrir uma tela React já existente (pedidos/catálogo).
+  // O Phaser só EMITE a intenção; quem decide trocar de aba é o App (dono do estado de navegação).
+  useEffect(() => {
+    const off = bridgeRef.current.onIntent((intent) => {
+      if (intent.type === 'navigate') onNavigateTab?.(intent.tab);
+    });
+    return off;
+  }, [onNavigateTab]);
   // Ao entrar/sair da tela cheia o Phaser só recalcula o tamanho do canvas (Scale.RESIZE): sem recriar Game nem cena
   const refreshScale = useCallback(() => {
     requestAnimationFrame(() => gameRef.current?.scale.refresh());
@@ -95,11 +112,7 @@ export const AdventureGameScreen: React.FC<AdventureGameScreenProps> = ({ onExit
                 Protótipo / Beta
               </span>
             </div>
-            <p className="text-[10px] sm:text-xs text-stone-400 truncate">
-              {activeMode === 'world'
-                ? 'Mapa do bairro — explore no seu ritmo'
-                : 'Trecho de plataforma — atravesse até o destino'}
-            </p>
+            <p className="text-[10px] sm:text-xs text-stone-400 truncate">{SCENE_SUBTITLE[activeMode]}</p>
           </div>
         </div>
 

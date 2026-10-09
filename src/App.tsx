@@ -37,7 +37,7 @@ import { runAutomaticLocalStorageMigration, MigrationResult } from './services/m
 const AdventureGameScreen = lazy(() =>
   import('./phaser-game').then((module) => ({ default: module.AdventureGameScreen }))
 );
-import { Plus, Search, CheckCircle2, Store, Truck, DollarSign, Package, ShoppingBag, Coins, Gamepad2 } from 'lucide-react';
+import { Plus, Search, CheckCircle2, Store, Truck, DollarSign, Package, ShoppingBag, Coins } from 'lucide-react';
 
 export default function App() {
   // Autenticação: a AUTORIDADE é a sessão no servidor (cookie HttpOnly). 'checking' = ainda perguntando ao servidor.
@@ -414,12 +414,6 @@ export default function App() {
     showToast(`Pedido #${order.orderNumber} de ${order.customerName} despachado para o mapa!`);
   };
 
-  const handleStartGameDelivery = (order: CustomerOrder) => {
-    setActiveOrder(order);
-    setActiveTab('jogo');
-    showToast(`Pedido #${order.orderNumber} iniciado no Mini-Jogo 2D! Vá até a loja pegar a planta.`);
-  };
-
   const handleGameDelivery = (
     orderId: string, 
     plantId: string, 
@@ -644,28 +638,6 @@ export default function App() {
                 </span>
               </div>
             </div>
-
-            {/* Atalho para o Mini-Jogo 2D de Entregas */}
-            <div className="mt-4 pt-3.5 border-t border-white/10 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
-              <div className="flex items-center gap-2">
-                <span className="text-base">🚴</span>
-                <p className="text-xs text-stone-300">
-                  <strong className="text-white">Mini-Jogo 2D em Olinda:</strong> Jogue como Bernardo entregando plantas pelas ladeiras históricas.
-                </p>
-              </div>
-              <button
-                id="hero-btn-play-game"
-                type="button"
-                onClick={() => {
-                  sounds.playPlim();
-                  setActiveTab('jogo');
-                }}
-                className="inline-flex items-center justify-center gap-2 px-3.5 py-1.5 rounded-xl bg-emerald-700 hover:bg-emerald-600 active:bg-emerald-800 text-white font-display font-bold text-xs shadow-xs transition-all cursor-pointer whitespace-nowrap self-start sm:self-auto"
-              >
-                <Gamepad2 className="w-3.5 h-3.5 text-emerald-200" />
-                <span>Jogar Entregas 2D</span>
-              </button>
-            </div>
           </div>
         </section>
 
@@ -757,7 +729,6 @@ export default function App() {
             plants={plants}
             onUpdateOrderStatus={handleUpdateOrderStatus}
             onDispatchToMap={handleDispatchToMap}
-            onStartGameDelivery={handleStartGameDelivery}
             onGoToCatalog={() => setActiveTab('catalogo')}
           />
         )}
@@ -802,7 +773,7 @@ export default function App() {
               </div>
             }
           >
-            <AdventureGameScreen onExit={() => setActiveTab('catalogo')} onDataChanged={reloadBusinessData} />
+            <AdventureGameScreen onExit={() => setActiveTab('catalogo')} onDataChanged={reloadBusinessData} onNavigateTab={setActiveTab} />
           </Suspense>
         )}
       </main>

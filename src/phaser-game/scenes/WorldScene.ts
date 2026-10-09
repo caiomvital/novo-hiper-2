@@ -25,7 +25,9 @@ import { emptyDeliveryMessage } from '../logic/emptyState';
 import { thanksFor } from '../../shared/roster';
 import type { AdventureBridge, AdventureSnapshot } from '../bridge/adventureBridge';
 import { REARM_DISTANCE, computeReturnPoint, distanceToEntrance, isInsideEntrance } from '../logic/worldEntrance';
-import { consumeWorldReturnPoint, setWorldReturnPoint } from '../transition/transitionStore';
+import { STORE_REARM_DISTANCE, distanceToStoreDoor, isNearStoreDoor } from '../logic/storeEntrance';
+import { consumeStoreReturnPoint, consumeWorldReturnPoint, setWorldReturnPoint } from '../transition/transitionStore';
+import { createHeldPlantImage, positionHeldPlant } from '../world/heldPlant';
 
 const PLAYER_SPEED = WORLD.playerSpeed;
 const CUSTOMER_TEXTURE_KEY = 'cliente-provisorio';
@@ -43,6 +45,8 @@ export class WorldScene extends Phaser.Scene {
   private entranceVisual!: Phaser.GameObjects.Arc;
   private isTransitioning = false;
   private entranceArmed = true;
+  private storeArmed = true;
+  private heldPlant!: Phaser.GameObjects.Image;
 
   // ── Vertical slice de entrega (o Phaser só EMITE a intenção; React chama a API) ──
   private bridge: AdventureBridge | null = null;
@@ -86,6 +90,7 @@ export class WorldScene extends Phaser.Scene {
     this.instanceId = ++worldSceneInstances;
     this.isTransitioning = false;
     this.entranceArmed = true;
+    this.storeArmed = true;
     this.snap = null;
     this.nearCustomer = false;
     this.nearUtilities = false;
@@ -130,10 +135,13 @@ export class WorldScene extends Phaser.Scene {
 
     // Jogador (Bernardo top-down). O body é o mesmo 32x44 centrado de antes; o desenho é maior que o body.
     createBernardoTopdownAnimations(this);
-    const returnPoint = consumeWorldReturnPoint();
+    const platformReturn = consumeWorldReturnPoint();
+    const storeReturn = consumeStoreReturnPoint();
+    const returnPoint = platformReturn ?? storeReturn;
     const spawn = returnPoint ?? WORLD_MAP.spawn;
-    // Voltando da plataforma: a entrada só rearma depois que Bernardo se afastar dela
-    if (returnPoint) this.entranceArmed = false;
+    // Voltando da plataforma ou da loja: a respectiva zona só rearma depois que Bernardo se afastar dela
+    if (platformReturn) this.entranceArmed = false;
+    if (storeReturn) this.storeArmed = false;
     this.playerShadow = this.add
       .ellipse(spawn.x, spawn.y + TOPDOWN_BODY.height / 2, TOPDOWN_SHADOW.width, TOPDOWN_SHADOW.height, 0x000000, TOPDOWN_SHADOW.alpha)
       .setDepth(0.5);
@@ -146,6 +154,7 @@ export class WorldScene extends Phaser.Scene {
       .setOffset(TOPDOWN_BODY_OFFSET.x, TOPDOWN_BODY_OFFSET.y);
     this.player.anims.play('td-idle-down');
     this.currentAnim = 'idle-down';
+    this.heldPlant = createHeldPlantImage(this, 1.5);
 
     this.cameras.main.startFollow(this.player, true, 0.12, 0.12);
 
@@ -312,6 +321,9 @@ export class WorldScene extends Phaser.Scene {
     } else if (order && this.destination?.status === 'unknown') {
       text = `Pedido #${order.orderNumber}: endereço desconhecido (${this.destination.destinationId || 'vazio'}). Entrega indisponível.`;
       color = '#fca5a5';
+    } else if (order && order.status !== 'pronto') {
+      text = `Pedido #${order.orderNumber}: pegue ${order.plantName} na Novo Hiper antes de entregar.`;
+      color = '#fde68a';
     } else if (order) text = `Entrega #${order.orderNumber}: ${order.plantName} para ${order.customerName}`;
     else text = emptyDeliveryMessage(snap.stockHint);
     this.deliveryHud.setText(text).setColor(color).setVisible(text !== '');
@@ -388,22 +400,22 @@ export class WorldScene extends Phaser.Scene {
     const order = snap?.activeOrder ?? null;
     const target = this.activeTarget();
     const interactive = Boolean(snap) && snap!.phase === 'idle' && !snap!.uiOpen;
-    const canDeliver = Boolean(snap && order && order.deliverable !== false && target && snap.phase === 'idle');
+    // Pedido entregável e com destino conhecido (indicador de direção aparece mesmo antes de pegar a planta,
+    // para Bernardo já saber para onde vai); entregar de fato exige status 'pronto' (já retirado na loja).
+    const hasTarget = Boolean(snap && order && order.deliverable !== false && target && snap.phase === 'idle');
+    const canDeliver = hasTarget && order!.status === 'pronto';
     this.nearCustomer = canDeliver && interactive && target !== null && isWithinRadius(this.player, target, target.interactRadius);
-    const { utilities, shop } = WORLD_MAP;
+    const { utilities } = WORLD_MAP;
     this.nearUtilities = interactive && isWithinRadius(this.player, utilities.interact, utilities.interactRadius);
-    this.nearShop =
-      interactive && (snap?.pendingUpgrades.length ?? 0) > 0 && isWithinRadius(this.player, shop.interact, shop.interactRadius);
-    const showPrompt = this.nearCustomer || this.nearUtilities || this.nearShop;
+    const showPrompt = this.nearCustomer || this.nearUtilities;
     this.promptText.setVisible(showPrompt);
     if (showPrompt) {
       if (this.nearCustomer && order) this.promptText.setText(`E / ✋  Entregar ${order.plantName} para ${order.customerName}`);
-      else if (this.nearUtilities) this.promptText.setText('E / ✋  Entrar na Loja de Utilidades');
-      else this.promptText.setText('E / ✋  Instalar melhorias na Novo Hiper');
+      else this.promptText.setText('E / ✋  Entrar na Loja de Utilidades');
       this.promptText.setPosition(this.cameras.main.width / 2, this.cameras.main.height - 150);
     }
-    // Indicador de destino: só com entrega ativa e ocioso
-    const showIndicator = canDeliver && order !== null;
+    // Indicador de destino: qualquer pedido entregável com endereço conhecido, mesmo antes da retirada
+    const showIndicator = hasTarget && order !== null;
     this.indicatorBg.setVisible(showIndicator);
     this.indicatorTitle.setVisible(showIndicator);
     this.indicatorName.setVisible(showIndicator);
@@ -420,10 +432,9 @@ export class WorldScene extends Phaser.Scene {
     }
     const pressed = this.inputState.consumePress('interact');
     if (pressed && this.bridge) {
-      // Só EMITE a intenção: o React valida e chama a API; o backend é a autoridade (entrega, compra e instalação).
+      // Só EMITE a intenção: o React valida e chama a API; o backend é a autoridade (entrega e compra).
       if (this.nearCustomer && order) this.bridge.emitIntent({ type: 'deliver', orderId: order.id });
       else if (this.nearUtilities) this.bridge.emitIntent({ type: 'openShop' });
-      else if (this.nearShop) this.bridge.emitIntent({ type: 'openInstall' });
     }
   }
 
@@ -543,6 +554,12 @@ export class WorldScene extends Phaser.Scene {
     if (this.entranceArmed && isInsideEntrance(this.player)) {
       this.handleEnterPlatform();
     }
+    if (!this.storeArmed && distanceToStoreDoor(this.player) > STORE_REARM_DISTANCE) {
+      this.storeArmed = true;
+    }
+    if (this.storeArmed && isNearStoreDoor(this.player)) {
+      this.handleEnterStore();
+    }
   }
 
   /** Animação (andando/parado, 4 direções) e sombra. Só visual: não altera velocidade nem collider. */
@@ -554,6 +571,9 @@ export class WorldScene extends Phaser.Scene {
       this.player.anims.play(`td-${name}`);
     }
     this.playerShadow.setPosition(this.player.x, this.player.y + TOPDOWN_BODY.height / 2);
+    const carrying = this.snap?.activeOrder?.status === 'pronto';
+    this.heldPlant.setVisible(carrying);
+    if (carrying) positionHeldPlant(this.heldPlant, this.player, this.facing === 'left');
   }
 
   private handleEnterPlatform() {
@@ -566,6 +586,20 @@ export class WorldScene extends Phaser.Scene {
     this.cameras.main.fadeOut(250, 0, 0, 0);
     this.cameras.main.once(Phaser.Cameras.Scene2D.Events.FADE_OUT_COMPLETE, () => {
       this.scene.start(SCENE_KEYS.Platform);
+    });
+  }
+
+  /**
+   * Bernardo chegou à porta da Novo Hiper: entra no interior explorável (balcão, prateleiras, estoque, preparo).
+   * Ao contrário da plataforma, o interior sempre nasce num spawn fixo (INTERIOR_SPAWN) — não precisamos
+   * calcular/guardar um ponto de retorno aqui; quem faz isso é NovoHiperInteriorScene ao SAIR.
+   */
+  private handleEnterStore() {
+    if (this.isTransitioning) return;
+    this.isTransitioning = true;
+    this.cameras.main.fadeOut(250, 0, 0, 0);
+    this.cameras.main.once(Phaser.Cameras.Scene2D.Events.FADE_OUT_COMPLETE, () => {
+      this.scene.start(SCENE_KEYS.Interior);
     });
   }
 }

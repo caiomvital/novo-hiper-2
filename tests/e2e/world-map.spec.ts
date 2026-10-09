@@ -3,7 +3,7 @@ import { CUSTOMER_SPOT } from '../../src/phaser-game/config/worldConfig';
 import { PIXELS_PER_METER, PLAYABLE_RECT, WORLD_MAP } from '../../src/phaser-game/config/worldMap';
 import { NEAR_DESTINATION_PX } from '../../src/phaser-game/logic/destination';
 import { closeSuiteOrders, createSuiteOrder, suiteId } from './suiteData';
-import { holdKeys, login, openAdventure, state, teleport } from './helpers';
+import { holdKeys, login, openAdventure, pickUpActiveOrder, state, teleport } from './helpers';
 
 const waitDelivery = (page: import('@playwright/test').Page, pred: string, timeout = 30_000) =>
   page.waitForFunction(`(() => { const d = window.__NH_ADVENTURE__?.getState().delivery; return Boolean(d && (${pred})); })()`, null, { timeout });
@@ -50,14 +50,17 @@ test.describe('o bairro (3200x2400) em viewport pequeno (celular)', () => {
     await login(page);
     await openAdventure(page);
 
-    // Novo Hiper: andando para cima a partir da calçada, para na parede (base do prédio em y=1000; corpo 44 de altura)
-    await holdKeys(page, ['ArrowUp'], 3500);
+    // Novo Hiper: pela FRENTE (calçada), a porta agora leva ao interior em vez de barrar — ver interior.spec.ts.
+    // A colisão real do prédio continua valendo pelas laterais (ninguém atravessa as paredes andando de lado):
+    await teleport(page, WORLD_MAP.shop.rect.x - 50, 850); // a oeste do prédio, longe do raio da porta (x=1032,y=1056)
+    await page.waitForTimeout(300);
+    await holdKeys(page, ['ArrowRight'], 2000);
     let p = (await state(page)).player!;
-    expect(p.y).toBeGreaterThanOrEqual(1000 + 22 - 1);
-    expect(p.y).toBeLessThan(WORLD_MAP.spawn.y); // andou, mas parou antes de entrar
+    expect(p.x).toBeLessThanOrEqual(WORLD_MAP.shop.rect.x - 16 + 1);
     // contra a parede ele continua parado (não atravessa mesmo segurando a tecla)
-    await holdKeys(page, ['ArrowUp'], 1200);
-    expect((await state(page)).player!.y).toBeGreaterThanOrEqual(1000 + 22 - 1);
+    await holdKeys(page, ['ArrowRight'], 1200);
+    expect((await state(page)).player!.x).toBeLessThanOrEqual(WORLD_MAP.shop.rect.x - 16 + 1);
+    expect((await state(page)).scene).toBe('world'); // não entrou no interior por essa lateral
 
     // fonte da praça (x=1768): subindo pela rua do sul da praça, para antes de atravessá-la
     await teleport(page, WORLD_MAP.plaza.fountain.x, 1060);
@@ -128,7 +131,8 @@ test.describe('indicador de destino (direção e distância)', () => {
     expect(d.indicator!.arrowVisible).toBe(false);
     expect(d.promptVisible).toBe(false);
 
-    // dentro do raio de interação aparece o prompt (comportamento da entrega inalterado)
+    // dentro do raio de interação aparece o prompt (comportamento da entrega inalterado) — exige ter pego a planta
+    await pickUpActiveOrder(page);
     await teleport(page, CUSTOMER_SPOT.x, CUSTOMER_SPOT.y + 30);
     await waitDelivery(page, 'd.near && d.promptVisible');
 

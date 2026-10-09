@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { MainTab } from '../types';
-import { Plus, Leaf, Volume2, VolumeX, Store, MapPinned, ShoppingBag, Coins, LogOut, Gamepad2, Rocket } from 'lucide-react';
+import { Plus, Leaf, Volume2, VolumeX, Store, MapPinned, ShoppingBag, Coins, LogOut, Rocket } from 'lucide-react';
 import { sounds } from '../services/sound';
 import { formatPrice } from '../services/storage';
 import { PWAInstallButton } from './PWAInstallButton';
@@ -179,19 +179,7 @@ export const Header: React.FC<HeaderProps> = ({
             )}
           </button>
 
-          <button
-            id="tab-btn-game"
-            type="button"
-            onClick={() => handleTab('jogo')}
-            className={`flex-1 sm:flex-initial flex items-center justify-center gap-1.5 sm:gap-2 px-3 py-2 rounded-xl text-xs sm:text-sm font-display font-bold transition-all cursor-pointer whitespace-nowrap ${
-              activeTab === 'jogo'
-                ? 'bg-white text-stone-900 shadow-2xs'
-                : 'text-stone-600 hover:text-stone-900'
-            }`}
-          >
-            <Gamepad2 className="w-4 h-4 text-emerald-700 flex-shrink-0" />
-            <span>Jogo 2D 🎮</span>
-          </button>
+          {/* Jogo 2D 🎮 (legado) desativado: foco passou a ser a Aventura (Beta). Código preservado em src/game/. */}
 
           <button
             id="tab-btn-adventure"

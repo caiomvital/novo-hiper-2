@@ -4,7 +4,7 @@ import { HOUSE_CATALOG } from '../../src/phaser-game/config/houseCatalog';
 import { CUSTOMER_SPOT } from '../../src/phaser-game/config/worldConfig';
 import { WORLD_MAP } from '../../src/phaser-game/config/worldMap';
 import { destinationInfoFor } from './destinationHelpers';
-import { login, openAdventure, state, teleport } from './helpers';
+import { login, openAdventure, pickUpActiveOrder, state, teleport } from './helpers';
 import { closeSuiteOrders, createSuiteCustomer, createSuiteOrder, suiteId } from './suiteData';
 
 test.afterEach(({ page }) => closeSuiteOrders(page).catch(() => undefined));
@@ -82,6 +82,9 @@ test.describe('clientes em casas diferentes', () => {
       await page.waitForTimeout(700);
       expect(calls.start).toBe(i);
       expect((await get(page, `/api/orders/${orders[i].id}`)).status).not.toBe('entregue');
+
+      // pega a planta na Novo Hiper antes de poder entregar (o único POST /deliveries/start desta volta)
+      await pickUpActiveOrder(page);
 
       // casa CERTA: entrega uma única vez
       await teleport(page, target.deliveryPoint.x, target.deliveryPoint.y + (target.facing === 's' ? 20 : -20));
