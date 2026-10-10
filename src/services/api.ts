@@ -17,6 +17,13 @@ export interface ShopSnapshot {
   upgrades: ShopUpgradeView[];
 }
 
+export type ObraLesteStage = 'parada' | 'ativa' | 'quase_pronta';
+/** Estágio visual do mundo (Progressão 2B), derivado dos marcos pelo backend — o frontend só renderiza. */
+export interface WorldStage {
+  obraLeste: ObraLesteStage;
+  environmentalNeighbors: number;
+}
+
 const API_BASE = import.meta.env.VITE_API_URL || '/api';
 
 class ApiClient {
@@ -284,6 +291,12 @@ class ApiClient {
   // --- Loja de Utilidades (o backend é a autoridade de preço, saldo, compra e instalação) ---
   async getShop(): Promise<ShopSnapshot> {
     return this.request<ShopSnapshot>('/shop');
+  }
+
+  /** Progressão 2B: só o `worldStage` interessa ao mundo (o backend decide; o frontend renderiza). */
+  async getWorldStage(): Promise<WorldStage> {
+    const data = await this.request<{ worldStage: WorldStage }>('/progress');
+    return data.worldStage;
   }
 
   async purchaseShopUpgrade(id: string): Promise<ShopSnapshot & { alreadyApplied: boolean }> {

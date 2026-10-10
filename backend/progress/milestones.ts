@@ -117,3 +117,23 @@ export async function readMilestones(db: DbWrapper): Promise<Record<string, Mile
   const at = new Map<string, number>(rows.map((r: any) => [r.id, r.achieved_at]));
   return Object.fromEntries(MILESTONES.map((m) => [m.id, { achieved: at.has(m.id), achievedAt: at.get(m.id) ?? null }]));
 }
+
+/**
+ * Progressão 2B: "o bairro reage". Estado visual do mundo DERIVADO dos marcos já gravados (sem migration,
+ * sem estado próprio) — o backend decide o estágio, o frontend só renderiza (nunca decide marcos nem estágios).
+ */
+export type ObraLesteStage = 'parada' | 'ativa' | 'quase_pronta';
+
+export interface WorldStage {
+  /** Barreira "EM OBRAS" na avenida H2 (leste): segue fechada nos três estágios; só o visual muda. */
+  obraLeste: ObraLesteStage;
+  /** Quantidade de moradores "de ambiente" perto da Novo Hiper (decorativos: sem diálogo, sem IA). */
+  environmentalNeighbors: number;
+}
+
+export function deriveWorldStage(milestones: Record<string, MilestoneState>): WorldStage {
+  const has = (id: string) => milestones[id]?.achieved ?? false;
+  const obraLeste: ObraLesteStage = has('bairro_vivo') ? 'quase_pronta' : has('vizinhos_3') ? 'ativa' : 'parada';
+  const environmentalNeighbors = has('vizinhos_3') ? 3 : has('vizinhos_2') ? 2 : has('primeira_melhoria') ? 1 : 0;
+  return { obraLeste, environmentalNeighbors };
+}

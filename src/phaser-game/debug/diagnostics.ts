@@ -50,6 +50,8 @@ export interface AdventureDiagnostics {
     feedbackLine: string | null;
     /** O pedido ativo pode ser entregue com o estoque atual? (null = sem pedido). */
     deliverable: boolean | null;
+    /** Só na WorldScene: estágio visual do mundo (Progressão 2B), derivado dos marcos pelo backend. */
+    worldStage?: { obraLeste: 'parada' | 'ativa' | 'quase_pronta'; environmentalNeighbors: number } | null;
     shop: {
       cashText: string | null;
       cashBalance: number | null;

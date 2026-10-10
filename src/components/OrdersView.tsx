@@ -17,6 +17,33 @@ import {
 import { CustomerOrder, OrderStatus, Plant } from '../types';
 import { formatPrice } from '../services/storage';
 import { sounds } from '../services/sound';
+import { colorForResident } from '../shared/residentColor';
+
+/** Avatar com fallback: iniciais em círculo colorido quando não há foto (clientes novos do roster) ou ela falha ao carregar. */
+const CustomerAvatar: React.FC<{ customerId: string; name: string; avatarUrl?: string }> = ({ customerId, name, avatarUrl }) => {
+  const [failed, setFailed] = useState(false);
+  if (!avatarUrl || failed) {
+    const initial = name.trim().charAt(0).toUpperCase() || '?';
+    return (
+      <div
+        className="w-11 h-11 rounded-full border-2 border-white shadow-xs flex items-center justify-center text-white font-display font-bold text-base"
+        style={{ backgroundColor: colorForResident(customerId) }}
+        aria-label={name}
+      >
+        {initial}
+      </div>
+    );
+  }
+  return (
+    <img
+      src={avatarUrl}
+      alt={name}
+      onError={() => setFailed(true)}
+      className="w-11 h-11 rounded-full object-cover border-2 border-white shadow-xs"
+      referrerPolicy="no-referrer"
+    />
+  );
+};
 
 interface OrdersViewProps {
   orders: CustomerOrder[];
@@ -339,12 +366,7 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
                     <div className="flex items-center gap-3">
                       {/* Avatar do Cliente */}
                       <div className="relative flex-shrink-0">
-                        <img
-                          src={order.customerAvatarUrl}
-                          alt={order.customerName}
-                          className="w-11 h-11 rounded-full object-cover border-2 border-white shadow-xs"
-                          referrerPolicy="no-referrer"
-                        />
+                        <CustomerAvatar customerId={order.customerId} name={order.customerName} avatarUrl={order.customerAvatarUrl} />
                         <span className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 rounded-full bg-emerald-500 border-2 border-white" />
                       </div>
 

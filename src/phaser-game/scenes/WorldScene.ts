@@ -6,6 +6,8 @@ import { ShopUpgradeVisuals } from '../world/shopUpgrades';
 import { resolveDestination, type DestinationHouse, type ResolvedDestination } from '../config/houseCatalog';
 import { WORLD_MAP, PLAYABLE_RECT } from '../config/worldMap';
 import { drawWorld } from '../world/drawWorld';
+import { createObraLeste, type ObraLesteController } from '../world/obraLeste';
+import { createEnvironmentalNeighbors, type EnvironmentalNeighborsController } from '../world/environmentalNeighbors';
 import { rectCenter } from '../logic/worldGeometry';
 import {
   Facing,
@@ -23,6 +25,7 @@ import { destinationIndicator, formatMeters } from '../logic/destination';
 import { formatBRL } from '../logic/format';
 import { emptyDeliveryMessage } from '../logic/emptyState';
 import { thanksFor } from '../../shared/roster';
+import { colorForResidentHex } from '../../shared/residentColor';
 import type { AdventureBridge, AdventureSnapshot } from '../bridge/adventureBridge';
 import { REARM_DISTANCE, computeReturnPoint, distanceToEntrance, isInsideEntrance } from '../logic/worldEntrance';
 import { STORE_REARM_DISTANCE, distanceToStoreDoor, isNearStoreDoor } from '../logic/storeEntrance';
@@ -73,6 +76,8 @@ export class WorldScene extends Phaser.Scene {
   private nearUtilities = false;
   private nearShop = false;
   private shopVisuals: ShopUpgradeVisuals | null = null;
+  private obraLeste!: ObraLesteController;
+  private environmentalNeighbors!: EnvironmentalNeighborsController;
   private cashHud!: Phaser.GameObjects.Text;
   private controlsHint!: Phaser.GameObjects.Text;
   private feedbackPlayedFor: string | null = null;
@@ -109,6 +114,8 @@ export class WorldScene extends Phaser.Scene {
     this.cameras.main.setBounds(0, 0, WORLD_MAP.width, WORLD_MAP.height);
     this.cameras.main.fadeIn(200, 0, 0, 0);
     drawWorld(this, WORLD_MAP);
+    this.obraLeste = createObraLeste(this);
+    this.environmentalNeighbors = createEnvironmentalNeighbors(this);
 
     // Colisões: um retângulo estático por elemento sólido (invisíveis; o desenho já está no mapa)
     this.solids = this.physics.add.staticGroup();
@@ -293,6 +300,8 @@ export class WorldScene extends Phaser.Scene {
     this.snap = snap;
     this.cashHud.setVisible(snap.cashBalance !== null).setText(snap.cashBalance !== null ? `Caixa: ${formatBRL(snap.cashBalance)}` : '');
     this.shopVisuals?.apply(snap.installedUpgrades, snap.uiOpen);
+    this.obraLeste.setStage(snap.worldStage.obraLeste);
+    this.environmentalNeighbors.setCount(snap.worldStage.environmentalNeighbors);
     const order = snap.activeOrder;
     this.destination = order ? resolveDestination(order.destinationId) : null;
     const house = this.destination?.status === 'house' ? this.destination.house : null;
@@ -300,6 +309,7 @@ export class WorldScene extends Phaser.Scene {
     const needsRestock = Boolean(order) && order!.deliverable === false; // estoque baixado à mão: o pedido continua, mas não dá para entregar
     const show = Boolean(order) && Boolean(house) && !needsRestock;
     this.customerSprite.setVisible(show);
+    if (order) this.customerSprite.setTint(colorForResidentHex(order.customerId));
     this.customerLabel.setVisible(show).setText(order ? order.customerName : '');
     this.customerMarker.setVisible(show && snap.phase === 'idle');
     this.deliveryRing.setVisible(show && snap.phase === 'idle');
@@ -503,6 +513,7 @@ export class WorldScene extends Phaser.Scene {
         lastReward: this.snap?.lastDelivery?.reward ?? null,
         feedbackLine: this.feedbackLine,
         deliverable: this.snap?.activeOrder ? this.snap.activeOrder.deliverable : null,
+        worldStage: this.snap?.worldStage ?? null,
         shop: {
           cashText: this.cashHud?.visible ? this.cashHud.text : null,
           cashBalance: this.snap?.cashBalance ?? null,

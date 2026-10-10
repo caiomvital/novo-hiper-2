@@ -8,6 +8,7 @@ import { TouchControls } from './ui/TouchControls';
 import { AdventureBridge } from './bridge/adventureBridge';
 import { useDeliveryFlow } from './useDeliveryFlow';
 import { useShopFlow } from './useShopFlow';
+import { useWorldProgress } from './useWorldProgress';
 import { ShopPanel } from './ui/ShopPanel';
 import { useFullscreen } from './useFullscreen';
 
@@ -35,6 +36,7 @@ export const AdventureGameScreen: React.FC<AdventureGameScreenProps> = ({ onExit
   const bridgeRef = useRef<AdventureBridge>(new AdventureBridge());
   useDeliveryFlow(bridgeRef.current, onDataChanged);
   const shopFlow = useShopFlow(bridgeRef.current, inputStateRef.current, onDataChanged);
+  useWorldProgress(bridgeRef.current);
   const [activeMode, setActiveMode] = useState<SceneMode>('world');
 
   // Balcão/prateleira/estoque do interior pedem pra abrir uma tela React já existente (pedidos/catálogo).

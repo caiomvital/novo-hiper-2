@@ -188,6 +188,18 @@ test('6. grupo 2: aparece só depois de uma melhoria instalada e 3 entregas, e o
   expect(d.highlightVisible).toBe(true);
 });
 
+test('6b. worldStage (Progressão 2B): 2 vizinhos ambientais, obra ainda parada (só vizinhos_2 alcançado)', async ({ page }) => {
+  const progress = (await api(page, 'get', '/api/progress')).body;
+  expect(progress.milestones.vizinhos_2.achieved).toBe(true);
+  expect(progress.milestones.vizinhos_3.achieved).toBe(false);
+  expect(progress.worldStage).toEqual({ obraLeste: 'parada', environmentalNeighbors: 2 });
+
+  // o frontend busca o estágio do backend e só renderiza (nunca decide): confere no estado real do WorldScene
+  await openAdventure(page);
+  await waitDelivery(page, "d.worldStage && d.worldStage.environmentalNeighbors === 2");
+  expect((await delivery(page)).worldStage).toEqual({ obraLeste: 'parada', environmentalNeighbors: 2 });
+});
+
 test('7. reload e reentrada preservam pedido, cliente e marcos', async ({ page }) => {
   const before = (await openOrders(page))[0];
   const milestones = (await api(page, 'get', '/api/progress')).body.milestones;

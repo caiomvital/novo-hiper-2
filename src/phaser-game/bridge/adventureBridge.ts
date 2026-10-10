@@ -5,6 +5,7 @@
  */
 import type { StockHint } from '../logic/emptyState';
 import type { OrderStatus } from '../../types';
+import type { WorldStage } from '../../services/api';
 
 export interface AdventureOrder {
   id: string;
@@ -47,6 +48,8 @@ export interface AdventureSnapshot {
   uiOpen: boolean;
   /** Motivo de não haver pedido (catálogo vazio / sem estoque / só aguardando). null = ainda não sabido. */
   stockHint: StockHint | null;
+  /** Estágio visual do mundo (Progressão 2B): obra leste e vizinhos ambientais. Derivado dos marcos pelo backend. */
+  worldStage: WorldStage;
 }
 
 export interface DeliverIntent {
@@ -88,6 +91,7 @@ export const INITIAL_SNAPSHOT: AdventureSnapshot = {
   pendingUpgrades: [],
   uiOpen: false,
   stockHint: null,
+  worldStage: { obraLeste: 'parada', environmentalNeighbors: 0 },
 };
 
 type SnapshotListener = (snapshot: AdventureSnapshot) => void;

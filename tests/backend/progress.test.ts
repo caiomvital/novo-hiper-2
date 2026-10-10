@@ -216,6 +216,51 @@ describe('bairro_vivo', () => {
   });
 });
 
+describe('worldStage (Progressão 2B): derivado dos marcos, nunca decidido pelo frontend', () => {
+  it('jogo novo: obra parada, nenhum vizinho ambiental', async () => {
+    const p = await progress();
+    expect(p.worldStage).toEqual({ obraLeste: 'parada', environmentalNeighbors: 0 });
+  });
+
+  it('primeira melhoria instalada: 1 vizinho ambiental, obra ainda parada', async () => {
+    await deliver({ price: 100 }); // caixa para comprar
+    await buyAndInstall(PLACA_MADEIRA);
+    expect((await progress()).worldStage).toEqual({ obraLeste: 'parada', environmentalNeighbors: 1 });
+  });
+
+  it('vizinhos_2 (1 melhoria + 3 entregas): 2 vizinhos ambientais, obra ainda parada', async () => {
+    for (let i = 0; i < 3; i++) await deliver({ price: 100 });
+    await buyAndInstall(PLACA_MADEIRA);
+    expect(await achieved()).toContain('vizinhos_2');
+    expect((await progress()).worldStage).toEqual({ obraLeste: 'parada', environmentalNeighbors: 2 });
+  });
+
+  it('vizinhos_3: obra fica ativa (cones/máquina/operário) e 3 vizinhos ambientais', async () => {
+    for (let i = 0; i < 6; i++) await deliver({ price: 100 });
+    await buyAndInstall(PLACA_MADEIRA);
+    await buyAndInstall(JARDINEIRAS);
+    expect(await achieved()).toContain('vizinhos_3');
+    expect((await progress()).worldStage).toEqual({ obraLeste: 'ativa', environmentalNeighbors: 3 });
+  });
+
+  it('bairro_vivo: obra fica quase pronta; vizinhos ambientais permanecem 3', async () => {
+    const houses = DESTINATION_IDS;
+    for (let i = 0; i < 3; i++) await createPlant(s, { price: 100, stock_quantity: 50 });
+    for (let i = 0; i < 10; i++) await deliver({ house: houses[i % 5], price: 100 });
+    for (const u of [PLACA_MADEIRA, JARDINEIRAS, BANCO]) await buyAndInstall(u);
+    expect(await achieved()).toContain('bairro_vivo');
+    expect((await progress()).worldStage).toEqual({ obraLeste: 'quase_pronta', environmentalNeighbors: 3 });
+  });
+
+  it('barreira nunca abre em nenhum estágio: worldStage não expõe nenhum campo de colisão/abertura', async () => {
+    for (let i = 0; i < 6; i++) await deliver({ price: 100 });
+    await buyAndInstall(PLACA_MADEIRA);
+    await buyAndInstall(JARDINEIRAS);
+    const stage = (await progress()).worldStage;
+    expect(Object.keys(stage).sort()).toEqual(['environmentalNeighbors', 'obraLeste']);
+  });
+});
+
 describe('permanência e idempotência', () => {
   it('um marco já ganho permanece (e com o mesmo achieved_at) mesmo que a condição deixe de ser verdadeira', async () => {
     const a = await createPlant(s);
