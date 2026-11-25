@@ -1,0 +1,22 @@
+﻿{
+  "sprite": "bernardo",
+  "frame_size": { "width": 72, "height": 80 },
+  "anchors": {
+    "feet_pivot": { "x": 36, "y": 76 },
+    "ground_shadow": { "x": 36, "y": 75 },
+    "hold_front": { "x": 36, "y": 52 },
+    "hold_side_right": { "x": 46, "y": 50 },
+    "hold_side_left": { "x": 26, "y": 50 },
+    "hold_back": { "x": 44, "y": 48 },
+    "emote_overhead": { "x": 36, "y": 12 }
+  },
+  "modules": [
+    "body",
+    "head",
+    "glasses",
+    "backpack",
+    "arms",
+    "hands",
+    "held_item_overlay"
+  ]
+}

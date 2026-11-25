@@ -1,4 +1,5 @@
 import React from 'react';
+import { useModalFocus } from '../hooks/useModalFocus';
 import { Plant } from '../types';
 import { Trash2 } from 'lucide-react';
 import { sounds } from '../services/sound';
@@ -8,6 +9,8 @@ interface DeleteConfirmModalProps {
   isOpen: boolean;
   onClose: () => void;
   onConfirm: () => void;
+  busy?: boolean;
+  error?: string | null;
 }
 
 export const DeleteConfirmModal: React.FC<DeleteConfirmModalProps> = ({
@@ -15,7 +18,10 @@ export const DeleteConfirmModal: React.FC<DeleteConfirmModalProps> = ({
   isOpen,
   onClose,
   onConfirm,
+  busy = false,
+  error,
 }) => {
+  useModalFocus(isOpen, 'delete-confirm-dialog', 'Excluir planta', () => { if (!busy) onClose(); });
   if (!isOpen || !plant) return null;
 
   const handleConfirm = () => {
@@ -48,11 +54,13 @@ export const DeleteConfirmModal: React.FC<DeleteConfirmModalProps> = ({
           <strong>Novo Hiper</strong>?
         </p>
 
+        {error && <p role="alert" className="text-rose-800 text-sm mb-3">{error}</p>}
         <div className="flex flex-col sm:flex-row items-center gap-2">
           <button
             id="btn-cancel-delete"
             type="button"
             onClick={handleCancel}
+            disabled={busy}
             className="w-full py-2.5 px-4 rounded-xl bg-stone-100 hover:bg-stone-200 text-stone-700 font-bold text-xs sm:text-sm transition-colors cursor-pointer"
           >
             Manter no Estoque
@@ -61,9 +69,10 @@ export const DeleteConfirmModal: React.FC<DeleteConfirmModalProps> = ({
             id="btn-confirm-delete"
             type="button"
             onClick={handleConfirm}
+            disabled={busy}
             className="w-full py-2.5 px-4 rounded-xl bg-rose-700 hover:bg-rose-800 text-white font-display font-bold text-xs sm:text-sm shadow-xs transition-all cursor-pointer"
           >
-            Sim, Remover
+            {busy ? 'Removendo…' : 'Sim, Remover'}
           </button>
         </div>
       </div>

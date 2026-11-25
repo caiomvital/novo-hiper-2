@@ -251,12 +251,24 @@ ordersRouter.put('/:id', async (req: Request, res: Response) => {
       return;
     }
 
+    if (status === 'pronto') {
+      const missing = await db.get(`SELECT p.name FROM order_items i LEFT JOIN plants p ON p.id = i.plant_id
+        WHERE i.order_id = ? AND (p.id IS NULL OR p.stock_quantity < i.quantity) LIMIT 1`, id);
+      if (missing) {
+        res.status(409).json({ code: 'ORDER_STOCK_INSUFFICIENT', error: 'Estoque insuficiente. Reponha a planta no catálogo antes de marcar o pedido como pronto.' });
+        return;
+      }
+    }
     const now = Date.now();
-    await db.run(`
+    const changed = await db.run(`
       UPDATE orders 
       SET status = ?, updated_at = ?
-      WHERE id = ?
+      WHERE id = ? AND status != 'entregue'
     `, [status, now, id]);
+    if (!changed.changes) {
+      res.status(409).json({ code: 'ORDER_ALREADY_DELIVERED', error: 'Este pedido já foi entregue e não pode ser reaberto.' });
+      return;
+    }
 
     const updated = await db.get('SELECT * FROM orders WHERE id = ?', id);
     res.json(updated);

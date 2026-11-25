@@ -1,4 +1,5 @@
 import Phaser from 'phaser';
+import { createResidentGarden } from '../world/residentGarden';
 import { SCENE_KEYS } from '../sceneKeys';
 import { InputState } from '../input/InputState';
 import { WORLD, ENTRANCE_ZONE, CUSTOMER_SPOT } from '../config/worldConfig';
@@ -6,9 +7,11 @@ import { ShopUpgradeVisuals } from '../world/shopUpgrades';
 import { resolveDestination, type DestinationHouse, type ResolvedDestination } from '../config/houseCatalog';
 import { WORLD_MAP, PLAYABLE_RECT } from '../config/worldMap';
 import { drawWorld } from '../world/drawWorld';
+import { preloadWorldArt } from '../world/worldArt';
 import { createObraLeste, type ObraLesteController } from '../world/obraLeste';
 import { createEnvironmentalNeighbors, type EnvironmentalNeighborsController } from '../world/environmentalNeighbors';
 import { rectCenter } from '../logic/worldGeometry';
+import { worldDepthAt } from '../logic/worldDepth';
 import {
   Facing,
   TOPDOWN_BODY,
@@ -25,7 +28,7 @@ import { destinationIndicator, formatMeters } from '../logic/destination';
 import { formatBRL } from '../logic/format';
 import { emptyDeliveryMessage } from '../logic/emptyState';
 import { thanksFor } from '../../shared/roster';
-import { colorForResidentHex } from '../../shared/residentColor';
+import { NPC_TEXTURE, preloadNpcArt, applyNpcAppearance } from '../world/npcArt';
 import type { AdventureBridge, AdventureSnapshot } from '../bridge/adventureBridge';
 import { REARM_DISTANCE, computeReturnPoint, distanceToEntrance, isInsideEntrance } from '../logic/worldEntrance';
 import { STORE_REARM_DISTANCE, distanceToStoreDoor, isNearStoreDoor } from '../logic/storeEntrance';
@@ -33,12 +36,12 @@ import { consumeStoreReturnPoint, consumeWorldReturnPoint, setWorldReturnPoint }
 import { createHeldPlantImage, positionHeldPlant } from '../world/heldPlant';
 
 const PLAYER_SPEED = WORLD.playerSpeed;
-const CUSTOMER_TEXTURE_KEY = 'cliente-provisorio';
 
 let worldSceneInstances = 0; // contador (diagnóstico): detecta se a cena foi recriada
 
 export class WorldScene extends Phaser.Scene {
   private instanceId = 0;
+  private residentGarden!: ReturnType<typeof createResidentGarden>;
   private player!: Phaser.Physics.Arcade.Sprite;
   private inputState!: InputState;
   private solids!: Phaser.Physics.Arcade.StaticGroup;
@@ -88,15 +91,31 @@ export class WorldScene extends Phaser.Scene {
   }
 
   preload() {
+    this.game.events.emit('adventure-loading', 0);
+    this.load.on('progress', (value: number) => this.game.events.emit('adventure-loading', Math.round(value * 95)));
     preloadBernardoTopdownSprites(this);
+    preloadWorldArt(this);
+    preloadNpcArt(this);
   }
 
   create() {
+    const startRoute = () => {
+      if (!this.isTransitioning && this.snap?.phase === 'idle' && !this.snap.uiOpen && this.snap.activeOrder?.status === 'pronto' && this.snap.activeOrder.deliverable) this.handleEnterPlatform(true);
+    };
+    const startPark = () => { if (!this.isTransitioning && !this.snap?.uiOpen && this.snap?.phase === 'idle') this.handleEnterPlatform(true, 'park'); };
+    this.game.events.on('start-jump-park', startPark);
+    this.events.once('shutdown', () => this.game.events.off('start-jump-park', startPark));
+    this.game.events.on('start-delivery-route', startRoute);
+    this.events.once('shutdown', () => this.game.events.off('start-delivery-route', startRoute));
     this.instanceId = ++worldSceneInstances;
     this.isTransitioning = false;
     this.entranceArmed = true;
     this.storeArmed = true;
     this.snap = null;
+    // Os objetos do bairro são recriados a cada visita; reposiciona o NPC mesmo no mesmo pedido.
+    this.placedFor = null;
+    this.destination = null;
+    this.markerTween = null;
     this.nearCustomer = false;
     this.nearUtilities = false;
     this.nearShop = false;
@@ -116,6 +135,7 @@ export class WorldScene extends Phaser.Scene {
     drawWorld(this, WORLD_MAP);
     this.obraLeste = createObraLeste(this);
     this.environmentalNeighbors = createEnvironmentalNeighbors(this);
+    this.residentGarden = createResidentGarden(this);
 
     // Colisões: um retângulo estático por elemento sólido (invisíveis; o desenho já está no mapa)
     this.solids = this.physics.add.staticGroup();
@@ -130,7 +150,7 @@ export class WorldScene extends Phaser.Scene {
     this.entranceVisual = this.add.circle(ENTRANCE_ZONE.x, ENTRANCE_ZONE.y, ENTRANCE_ZONE.radius, 0xf97316, 0.85);
     this.entranceVisual.setStrokeStyle(4, 0xfff7ed);
     this.add
-      .text(ENTRANCE_ZONE.x, ENTRANCE_ZONE.y - ENTRANCE_ZONE.radius - 26, 'ENTRADA', {
+      .text(ENTRANCE_ZONE.x, ENTRANCE_ZONE.y - ENTRANCE_ZONE.radius - 26, 'TREINO DE SALTOS', {
         fontSize: '15px',
         fontStyle: 'bold',
         color: '#fff7ed',
@@ -150,10 +170,10 @@ export class WorldScene extends Phaser.Scene {
     if (platformReturn) this.entranceArmed = false;
     if (storeReturn) this.storeArmed = false;
     this.playerShadow = this.add
-      .ellipse(spawn.x, spawn.y + TOPDOWN_BODY.height / 2, TOPDOWN_SHADOW.width, TOPDOWN_SHADOW.height, 0x000000, TOPDOWN_SHADOW.alpha)
+      .ellipse(spawn.x, spawn.y + TOPDOWN_BODY.height / 2, TOPDOWN_SHADOW.width, TOPDOWN_SHADOW.height, 0x39354f, TOPDOWN_SHADOW.alpha)
       .setDepth(0.5);
     this.player = this.physics.add.sprite(spawn.x, spawn.y, TOPDOWN_SPRITE.textureKey, frameIndex('down', 0));
-    this.player.setOrigin(TOPDOWN_ORIGIN.x, TOPDOWN_ORIGIN.y).setDepth(1);
+    this.player.setOrigin(TOPDOWN_ORIGIN.x, TOPDOWN_ORIGIN.y).setDepth(worldDepthAt(spawn.y + TOPDOWN_BODY.height / 2));
     this.player.setCollideWorldBounds(true);
     this.physics.add.collider(this.player, this.solids);
     (this.player.body as Phaser.Physics.Arcade.Body)
@@ -174,12 +194,13 @@ export class WorldScene extends Phaser.Scene {
       })
       .setScrollFactor(0);
 
+    this.controlsHint.setDepth(20);
+
     this.createDeliveryUi();
   }
 
   // ───────────────────────── entrega (vertical slice) ─────────────────────────
   private createDeliveryUi() {
-    this.createCustomerTexture();
     this.shopVisuals = new ShopUpgradeVisuals(this);
     // Saldo REAL do caixa (valor vem do backend via snapshot; o Phaser só exibe)
     this.cashHud = this.add
@@ -192,13 +213,13 @@ export class WorldScene extends Phaser.Scene {
       const w = this.scale.width;
       this.cashHud?.setPosition(w - 16, 16);
       // em telas estreitas a dica de teclado (inútil no celular) cede o espaço ao saldo
-      this.controlsHint?.setVisible(w >= 560);
+      this.controlsHint?.setVisible(w >= 560 && !this.registry.get('touchDevice'));
     };
     layoutHud();
     this.scale.on('resize', layoutHud);
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => this.scale.off('resize', layoutHud));
 
-    this.customerSprite = this.add.image(CUSTOMER_SPOT.x, CUSTOMER_SPOT.y, CUSTOMER_TEXTURE_KEY).setVisible(false);
+    this.customerSprite = this.add.image(CUSTOMER_SPOT.x, CUSTOMER_SPOT.y, NPC_TEXTURE, 'cust_dona_maria-down').setVisible(false);
     this.customerLabel = this.add
       .text(CUSTOMER_SPOT.x, CUSTOMER_SPOT.y + 34, '', {
         fontSize: '13px',
@@ -279,20 +300,7 @@ export class WorldScene extends Phaser.Scene {
     };
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, cleanup);
     this.events.once(Phaser.Scenes.Events.DESTROY, cleanup);
-  }
-
-  private createCustomerTexture() {
-    if (this.textures.exists(CUSTOMER_TEXTURE_KEY)) return;
-    const g = this.make.graphics({ x: 0, y: 0 }, false);
-    g.fillStyle(0xc2410c, 1);
-    g.fillRoundedRect(0, 8, 32, 44, 8); // corpo
-    g.fillStyle(0xfcd9b6, 1);
-    g.fillCircle(16, 12, 11); // cabeça
-    g.fillStyle(0x1c1917, 1);
-    g.fillRect(10, 10, 4, 4);
-    g.fillRect(19, 10, 4, 4);
-    g.generateTexture(CUSTOMER_TEXTURE_KEY, 32, 52);
-    g.destroy();
+    this.game.events.emit('adventure-loading', 100);
   }
 
   /** Reflete o snapshot do React no mundo. Toda a lógica de negócio fica no React/backend. */
@@ -301,7 +309,8 @@ export class WorldScene extends Phaser.Scene {
     this.cashHud.setVisible(snap.cashBalance !== null).setText(snap.cashBalance !== null ? `Caixa: ${formatBRL(snap.cashBalance)}` : '');
     this.shopVisuals?.apply(snap.installedUpgrades, snap.uiOpen);
     this.obraLeste.setStage(snap.worldStage.obraLeste);
-    this.environmentalNeighbors.setCount(snap.worldStage.environmentalNeighbors);
+    this.environmentalNeighbors.setPopulation(snap.worldStage.environmentalNeighbors, snap.activeOrder?.customerId ?? null);
+    this.residentGarden.apply(snap.worldStage.residentStory, snap.activeOrder?.customerId ?? null);
     const order = snap.activeOrder;
     this.destination = order ? resolveDestination(order.destinationId) : null;
     const house = this.destination?.status === 'house' ? this.destination.house : null;
@@ -309,7 +318,7 @@ export class WorldScene extends Phaser.Scene {
     const needsRestock = Boolean(order) && order!.deliverable === false; // estoque baixado à mão: o pedido continua, mas não dá para entregar
     const show = Boolean(order) && Boolean(house) && !needsRestock;
     this.customerSprite.setVisible(show);
-    if (order) this.customerSprite.setTint(colorForResidentHex(order.customerId));
+    if (order) applyNpcAppearance(this.customerSprite, order.customerId, house?.facing === 'n' ? 'up' : 'down');
     this.customerLabel.setVisible(show).setText(order ? order.customerName : '');
     this.customerMarker.setVisible(show && snap.phase === 'idle');
     this.deliveryRing.setVisible(show && snap.phase === 'idle');
@@ -355,9 +364,10 @@ export class WorldScene extends Phaser.Scene {
     if (!house) return;
     const { x, y } = house.deliveryPoint;
     this.customerSprite.setPosition(x, y);
-    this.customerLabel.setPosition(x, y + 34);
-    this.customerMarker.setPosition(x, y - 50);
-    this.markerTween = this.tweens.add({ targets: this.customerMarker, y: y - 58, yoyo: true, repeat: -1, duration: 500 });
+    this.customerSprite.setDepth(worldDepthAt(y + 22));
+    this.customerLabel.setPosition(x, y + 34).setDepth(2);
+    this.customerMarker.setPosition(x, y - 68).setDepth(2);
+    this.markerTween = this.tweens.add({ targets: this.customerMarker, y: y - 76, yoyo: true, repeat: -1, duration: 500 });
     this.deliveryRing.setPosition(x, y + 6);
     const r = house.rect;
     this.houseHighlight.fillStyle(0xfbbf24, 0.16).fillRect(r.x - 6, r.y - 6, r.w + 12, r.h + 12);
@@ -409,6 +419,11 @@ export class WorldScene extends Phaser.Scene {
     const snap = this.snap;
     const order = snap?.activeOrder ?? null;
     const target = this.activeTarget();
+    if (order && target && Math.hypot(this.player.x - target.x, this.player.y - target.y) < 180) {
+      const dx = this.player.x - target.x, dy = this.player.y - target.y;
+      const facing = Math.abs(dx) > Math.abs(dy) ? (dx < 0 ? 'left' : 'right') : (dy < 0 ? 'up' : 'down');
+      applyNpcAppearance(this.customerSprite, order.customerId, facing);
+    }
     const interactive = Boolean(snap) && snap!.phase === 'idle' && !snap!.uiOpen;
     // Pedido entregável e com destino conhecido (indicador de direção aparece mesmo antes de pegar a planta,
     // para Bernardo já saber para onde vai); entregar de fato exige status 'pronto' (já retirado na loja).
@@ -417,24 +432,30 @@ export class WorldScene extends Phaser.Scene {
     this.nearCustomer = canDeliver && interactive && target !== null && isWithinRadius(this.player, target, target.interactRadius);
     const { utilities } = WORLD_MAP;
     this.nearUtilities = interactive && isWithinRadius(this.player, utilities.interact, utilities.interactRadius);
-    const showPrompt = this.nearCustomer || this.nearUtilities;
+    const nearStory = interactive && this.residentGarden.near(this.player);
+    const showPrompt = this.nearCustomer || this.nearUtilities || nearStory;
     this.promptText.setVisible(showPrompt);
     if (showPrompt) {
       if (this.nearCustomer && order) this.promptText.setText(`E / ✋  Entregar ${order.plantName} para ${order.customerName}`);
-      else this.promptText.setText('E / ✋  Entrar na Loja de Utilidades');
+      else this.promptText.setText(nearStory ? 'E / ✋  Conversar com Dona Maria' : 'E / ✋  Entrar na Loja de Utilidades');
       this.promptText.setPosition(this.cameras.main.width / 2, this.cameras.main.height - 150);
     }
-    // Indicador de destino: qualquer pedido entregável com endereço conhecido, mesmo antes da retirada
-    const showIndicator = hasTarget && order !== null;
+    // A orientação escolhida pode apontar à loja sem trocar o pedido ativo.
+    const guide = snap?.navigationGoal ?? (order && order.status !== 'pronto' ? 'store' : null);
+    const guidePlace = guide === 'store' ? WORLD_MAP.shop : guide === 'utilities' ? utilities : null;
+    const indicatorTarget = guidePlace?.interact ?? (hasTarget ? target : null);
+    const showIndicator = Boolean(indicatorTarget && !snap?.uiOpen);
     this.indicatorBg.setVisible(showIndicator);
     this.indicatorTitle.setVisible(showIndicator);
     this.indicatorName.setVisible(showIndicator);
-    if (showIndicator && order && target) {
-      const ind = destinationIndicator(this.player, target);
-      this.indicatorName.setText(order.customerName);
-      this.indicatorArrow.setVisible(!ind.near).setRotation(ind.angle);
-      this.indicatorText.setVisible(true).setText(ind.near ? 'Destino próximo' : formatMeters(ind.meters));
-      this.indicatorIndicator = { meters: ind.meters, near: ind.near, angle: ind.angle };
+    if (showIndicator && indicatorTarget) {
+      const ind = destinationIndicator(this.player, indicatorTarget);
+      const near = guidePlace ? isWithinRadius(this.player, guidePlace.interact, guidePlace.interactRadius) : ind.near;
+      this.indicatorTitle.setText(guidePlace ? 'CAMINHO PARA A LOJA' : 'ENTREGA');
+      this.indicatorName.setText(guide === 'store' ? 'Novo Hiper' : guide === 'utilities' ? 'Loja de Utilidades' : order!.customerName);
+      this.indicatorArrow.setVisible(!near).setRotation(ind.angle);
+      this.indicatorText.setVisible(true).setText(near ? (guide === 'store' ? 'Entre pela porta' : guide === 'utilities' ? 'E / ✋  Entrar' : 'Destino próximo') : formatMeters(ind.meters));
+      this.indicatorIndicator = { meters: ind.meters, near, angle: ind.angle };
     } else {
       this.indicatorArrow.setVisible(false);
       this.indicatorText.setVisible(false);
@@ -444,7 +465,8 @@ export class WorldScene extends Phaser.Scene {
     if (pressed && this.bridge) {
       // Só EMITE a intenção: o React valida e chama a API; o backend é a autoridade (entrega e compra).
       if (this.nearCustomer && order) this.bridge.emitIntent({ type: 'deliver', orderId: order.id });
-      else if (this.nearUtilities) this.bridge.emitIntent({ type: 'openShop' });
+      else if (nearStory) this.game.events.emit('open-resident-story');
+      else if (this.nearUtilities) { this.bridge.setSnapshot({ navigationGoal: null }); this.bridge.emitIntent({ type: 'openShop' }); }
     }
   }
 
@@ -457,6 +479,8 @@ export class WorldScene extends Phaser.Scene {
       entranceArmed: this.entranceArmed,
       fallRespawns: 0,
       instance: this.instanceId,
+      residentGarden: this.residentGarden?.getState(),
+      neighbors: this.environmentalNeighbors?.getState() ?? [],
       // durante a troca de cena o sprite já pode ter sido destruído: só lê quando está ativo
       sprite: this.player?.active
         ? {
@@ -494,6 +518,7 @@ export class WorldScene extends Phaser.Scene {
         activeOrderId: this.snap?.activeOrder?.id ?? null,
         customerName: this.snap?.activeOrder?.customerName ?? null,
         customerVisible: this.customerSprite?.visible ?? false,
+        customerAppearance: this.customerSprite ? { texture: this.customerSprite.texture.key, frame: String(this.customerSprite.frame.name), scale: this.customerSprite.scaleX, x: this.customerSprite.x, y: this.customerSprite.y, depth: this.customerSprite.depth } : null,
         customer: this.activeTarget() ? { x: this.activeTarget()!.x, y: this.activeTarget()!.y } : { x: CUSTOMER_SPOT.x, y: CUSTOMER_SPOT.y },
         destination: this.destination
           ? {
@@ -508,7 +533,7 @@ export class WorldScene extends Phaser.Scene {
         promptVisible: this.promptText?.visible ?? false,
         hud: this.deliveryHud?.text ?? '',
         indicator: this.indicatorIndicator
-          ? { ...this.indicatorIndicator, text: this.indicatorText.text, arrowVisible: this.indicatorArrow.visible }
+          ? { ...this.indicatorIndicator, text: this.indicatorText.text, arrowVisible: this.indicatorArrow.visible, name: this.indicatorName.text }
           : null,
         lastReward: this.snap?.lastDelivery?.reward ?? null,
         feedbackLine: this.feedbackLine,
@@ -533,9 +558,10 @@ export class WorldScene extends Phaser.Scene {
     this.player.setPosition(x, y);
   }
 
-  update() {
+  update(_time: number, delta: number) {
     if (this.isTransitioning) return;
 
+    this.environmentalNeighbors.update(delta, this.player, Boolean(this.snap?.uiOpen || this.snap?.phase === 'delivering'));
     const input = this.inputState.snapshot;
     let vx = 0;
     let vy = 0;
@@ -582,21 +608,25 @@ export class WorldScene extends Phaser.Scene {
       this.player.anims.play(`td-${name}`);
     }
     this.playerShadow.setPosition(this.player.x, this.player.y + TOPDOWN_BODY.height / 2);
+    const depth = worldDepthAt(this.player.y + TOPDOWN_BODY.height / 2);
+    this.player.setDepth(depth);
+    this.heldPlant.setDepth(depth + 0.000001);
     const carrying = this.snap?.activeOrder?.status === 'pronto';
     this.heldPlant.setVisible(carrying);
     if (carrying) positionHeldPlant(this.heldPlant, this.player, this.facing === 'left');
   }
 
-  private handleEnterPlatform() {
+  private handleEnterPlatform(fromButton = false, space: 'park' | 'delivery' = 'delivery') {
     if (this.isTransitioning) return;
     this.isTransitioning = true;
+    this.bridge.setSnapshot({ navigationGoal: null });
 
     // Guarda onde Bernardo deve reaparecer: no lado de onde ele veio, FORA da zona de entrada
-    setWorldReturnPoint(computeReturnPoint(this.player));
+    setWorldReturnPoint(fromButton ? { x: this.player.x, y: this.player.y } : computeReturnPoint(this.player));
 
     this.cameras.main.fadeOut(250, 0, 0, 0);
     this.cameras.main.once(Phaser.Cameras.Scene2D.Events.FADE_OUT_COMPLETE, () => {
-      this.scene.start(SCENE_KEYS.Platform);
+      this.scene.start(SCENE_KEYS.Platform, { space });
     });
   }
 
@@ -608,6 +638,7 @@ export class WorldScene extends Phaser.Scene {
   private handleEnterStore() {
     if (this.isTransitioning) return;
     this.isTransitioning = true;
+    this.bridge.setSnapshot({ navigationGoal: null });
     this.cameras.main.fadeOut(250, 0, 0, 0);
     this.cameras.main.once(Phaser.Cameras.Scene2D.Events.FADE_OUT_COMPLETE, () => {
       this.scene.start(SCENE_KEYS.Interior);

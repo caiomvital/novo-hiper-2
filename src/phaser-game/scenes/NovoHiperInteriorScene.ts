@@ -13,6 +13,7 @@ import {
   STOCK,
 } from '../config/interiorMap';
 import { drawInteriorRoom } from '../world/drawInteriorRoom';
+import { worldDepthAt } from '../logic/worldDepth';
 import { rectCenter } from '../logic/worldGeometry';
 import { isWithinRadius } from '../logic/proximity';
 import {
@@ -121,7 +122,7 @@ export class NovoHiperInteriorScene extends Phaser.Scene {
         backgroundColor: '#1c1917cc',
         padding: { x: 8, y: 6 },
       })
-      .setScrollFactor(0);
+      .setScrollFactor(0).setDepth(20);
 
     this.cashHud = this.add
       .text(0, 16, '', { fontSize: '13px', fontStyle: 'bold', color: '#bbf7d0', backgroundColor: '#1c1917cc', padding: { x: 8, y: 6 } })
@@ -132,9 +133,13 @@ export class NovoHiperInteriorScene extends Phaser.Scene {
     const layoutHud = () => {
       const w = this.scale.width;
       this.cashHud?.setPosition(w - 16, 16);
-      this.controlsHint?.setVisible(w >= 620);
+      this.controlsHint?.setVisible(w >= 740 && !this.registry.get('touchDevice'));
+      const gutterX = Math.max(0, (w - INTERIOR_ROOM.width) / 2);
+      const gutterY = Math.max(0, (this.scale.height - INTERIOR_ROOM.height) / 2);
+      this.cameras.main.setBounds(-gutterX, -gutterY, INTERIOR_ROOM.width + gutterX * 2, INTERIOR_ROOM.height + gutterY * 2);
+      this.promptText?.setPosition(w / 2, w < 700 ? 86 : this.scale.height - 60);
+      this.promptText?.setWordWrapWidth(Math.max(120, Math.min(320, w - 48)));
     };
-    layoutHud();
     this.scale.on('resize', layoutHud);
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => this.scale.off('resize', layoutHud));
 
@@ -152,6 +157,8 @@ export class NovoHiperInteriorScene extends Phaser.Scene {
       .setScrollFactor(0)
       .setDepth(20)
       .setVisible(false);
+
+    layoutHud();
 
     this.bridge = (this.registry.get('bridge') as AdventureBridge | undefined) ?? null;
     this.inputState.consumePress('interact'); // descarta aperto antigo (ex.: usado para atravessar a porta)
@@ -214,7 +221,10 @@ export class NovoHiperInteriorScene extends Phaser.Scene {
       this.currentAnim = name;
       this.player.anims.play(`td-${name}`);
     }
-    this.playerShadow.setPosition(this.player.x, this.player.y + TOPDOWN_BODY.height / 2);
+    const depth = worldDepthAt(this.player.y + TOPDOWN_BODY.height / 2);
+    this.player.setDepth(depth);
+    this.playerShadow.setPosition(this.player.x, this.player.y + TOPDOWN_BODY.height / 2).setDepth(depth - 0.001);
+    this.heldPlant.setDepth(depth + 0.0001);
     const carrying = this.snap?.activeOrder?.status === 'pronto';
     this.heldPlant.setVisible(carrying);
     if (carrying) positionHeldPlant(this.heldPlant, this.player, this.facing === 'left');
@@ -233,16 +243,17 @@ export class NovoHiperInteriorScene extends Phaser.Scene {
     this.nearStock = interactive && isWithinRadius(this.player, STOCK.interact, STOCK.interactRadius);
     this.nearPrep = interactive && isWithinRadius(this.player, PREP_BENCH.interact, PREP_BENCH.interactRadius);
 
-    const canPickup = Boolean(order) && !carrying && order!.deliverable !== false;
+    const canPickup = Boolean(order) && !carrying && order!.deliverable !== false && snap?.phase === 'idle';
 
     let text = '';
     let action: (() => void) | null = null;
     if (this.nearPrep) {
-      if (carrying) text = 'Você já está com a planta! Leve até o cliente.';
+      if (snap?.phase === 'picking') text = 'Pegando a planta… Aguarde a confirmação.';
+      else if (carrying) text = 'Você já está com a planta! Leve até o cliente.';
       else if (!order) text = 'Nenhum pedido para preparar no momento.';
       else if (order.deliverable === false) text = `Sem estoque de ${order.plantName}. Reponha na Novo Hiper para preparar!`;
       else {
-        text = `E / ✋  Pegar ${order.plantName} para ${order.customerName}`;
+        text = snap?.message ? `${snap.message} E / ✋ Tentar novamente` : `E / ✋  Pegar ${order.plantName} para ${order.customerName}`;
         action = () => this.bridge?.emitIntent({ type: 'pickup', orderId: order.id });
       }
     } else if (this.nearCounter) {
@@ -347,11 +358,12 @@ export class NovoHiperInteriorScene extends Phaser.Scene {
           visuals: [],
         },
         interior: {
+          promptBounds: this.promptText ? { x: this.promptText.getBounds().x, y: this.promptText.getBounds().y, width: this.promptText.width, height: this.promptText.height } : null,
           nearShelf: this.nearShelf,
           nearStock: this.nearStock,
           nearCounter: this.nearCounter,
           nearPrep: this.nearPrep,
-          canPickup: Boolean(order) && !carrying && order?.deliverable !== false,
+          canPickup: Boolean(order) && !carrying && order?.deliverable !== false && this.snap?.phase === 'idle',
           carrying,
           exitArmed: this.exitArmed,
         },

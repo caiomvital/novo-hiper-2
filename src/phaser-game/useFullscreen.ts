@@ -1,29 +1,40 @@
-import { RefObject, useCallback, useEffect, useState } from 'react';
+import { RefObject, useCallback, useEffect, useRef, useState } from 'react';
 
-/** Fullscreen API (com prefixo webkit quando existir). Sem suporte adequado → `supported=false` e o botão não aparece. */
 type FsDocument = Document & { webkitFullscreenElement?: Element | null; webkitFullscreenEnabled?: boolean; webkitExitFullscreen?: () => Promise<void> };
 type FsElement = HTMLElement & { webkitRequestFullscreen?: () => Promise<void> };
-
+type LockableOrientation = ScreenOrientation & { lock?: (orientation: 'landscape') => Promise<void> };
 const fsElement = () => (document as FsDocument).fullscreenElement ?? (document as FsDocument).webkitFullscreenElement ?? null;
 
-function isSupported(): boolean {
-  if (typeof document === 'undefined') return false;
-  const d = document as FsDocument;
-  return Boolean(d.fullscreenEnabled || d.webkitFullscreenEnabled);
-}
-
-/**
- * Coloca o ELEMENTO indicado (o container inteiro da Aventura: Phaser + HUD + controles) em tela cheia.
- * Não recria nada: só pede fullscreen ao elemento e avisa quando o estado muda (inclui sair com Esc).
- * `onChange` é chamado depois de cada entrada/saída para o Phaser recalcular o tamanho do canvas.
- */
-export function useFullscreen(target: RefObject<HTMLElement | null>, onChange?: () => void) {
-  const [supported] = useState(isSupported);
+export function useFullscreen(target: RefObject<HTMLElement | null>, onChange?: () => void, preferLandscape = false) {
+  const [supported] = useState(() => typeof document !== 'undefined' && Boolean(document.fullscreenEnabled || (document as FsDocument).webkitFullscreenEnabled));
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const ownedLock = useRef(false);
+  const lockRevision = useRef(0);
+  const releaseOrientation = useCallback(() => {
+    lockRevision.current++;
+    if (ownedLock.current) {
+      try { screen.orientation?.unlock?.(); } catch { /* A página pode já estar oculta. */ }
+      ownedLock.current = false;
+    }
+  }, []);
+  const lockLandscape = useCallback(async () => {
+    if (ownedLock.current) return;
+    const orientation = screen.orientation as LockableOrientation | undefined;
+    const revision = ++lockRevision.current;
+    try {
+      if (orientation?.lock) {
+        await orientation.lock('landscape');
+        if (revision !== lockRevision.current) { if (!ownedLock.current) orientation.unlock?.(); return; }
+        ownedLock.current = true;
+      }
+    } catch { /* Sem suporte/permissão: a interface orienta a girar o aparelho. */ }
+  }, []);
 
   useEffect(() => {
     const sync = () => {
-      setIsFullscreen(fsElement() !== null && fsElement() === target.current);
+      const active = fsElement() !== null && fsElement() === target.current;
+      setIsFullscreen(active);
+      if (!active) releaseOrientation();
       onChange?.();
     };
     document.addEventListener('fullscreenchange', sync);
@@ -31,23 +42,39 @@ export function useFullscreen(target: RefObject<HTMLElement | null>, onChange?: 
     return () => {
       document.removeEventListener('fullscreenchange', sync);
       document.removeEventListener('webkitfullscreenchange', sync);
+      releaseOrientation();
     };
-  }, [target, onChange]);
+  }, [target, onChange, releaseOrientation]);
+  useEffect(() => {
+    if (isFullscreen && preferLandscape) void lockLandscape();
+    else releaseOrientation();
+  }, [isFullscreen, preferLandscape, lockLandscape, releaseOrientation]);
 
+  const enterLandscape = useCallback(async () => {
+    const el = target.current as FsElement | null;
+    if (!el) return;
+    const alreadyFullscreen = fsElement() === el;
+    try {
+      if (!alreadyFullscreen) {
+        if (el.requestFullscreen) await el.requestFullscreen();
+        else if (el.webkitRequestFullscreen) await el.webkitRequestFullscreen();
+      }
+    } catch { /* A rotação manual continua disponível. */ }
+    // Uma entrada nova é tratada pelo efeito fullscreenchange: evita duas solicitações concorrentes.
+    if (fsElement() === el && (alreadyFullscreen || !preferLandscape)) await lockLandscape();
+  }, [target, lockLandscape, preferLandscape]);
   const toggle = useCallback(async () => {
     const el = target.current as FsElement | null;
     if (!el) return;
     try {
       if (fsElement()) {
+        releaseOrientation();
         const d = document as FsDocument;
-        await (d.exitFullscreen?.() ?? d.webkitExitFullscreen?.());
+        if (d.exitFullscreen) await d.exitFullscreen(); else await d.webkitExitFullscreen?.();
       } else {
-        await (el.requestFullscreen?.() ?? el.webkitRequestFullscreen?.());
+        if (el.requestFullscreen) await el.requestFullscreen(); else await el.webkitRequestFullscreen?.();
       }
-    } catch {
-      /* o navegador recusou (sem gesto, política etc.): permanece como está */
-    }
-  }, [target]);
-
-  return { supported, isFullscreen, toggle };
+    } catch { /* O navegador mantém o modo atual. */ }
+  }, [target, releaseOrientation]);
+  return { supported, isFullscreen, toggle, enterLandscape };
 }

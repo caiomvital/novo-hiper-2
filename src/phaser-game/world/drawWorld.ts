@@ -1,9 +1,14 @@
 import Phaser from 'phaser';
+import { drawNeighborhoodLife } from './neighborhoodLife';
+import { drawDistrictGardens } from './districtGardens';
 import { WorldMapData, roadRect } from '../config/worldMap';
 import { Rect, rectCenter } from '../logic/worldGeometry';
+import { drawGround, prepareWorldArt, HOUSE_ART, NORTH_HOUSE_ART, PILOT_HOUSE_ART, PILOT_BUILDING_ANCHORS, SHOP_ART, URBAN_ART } from './worldArt';
+import { crossingStripes, housePaths, roadRuns } from './mapGroundPlan';
+import { worldDepthAt } from '../logic/worldDepth';
 
 const COLORS = {
-  outside: 0x1c3d12,
+  outside: 0x42633a,
   lawn: 0x4d7c0f,
   garden: 0x3f6212,
   lot: 0x7a8f3a,
@@ -26,11 +31,18 @@ const frame = (g: Phaser.GameObjects.Graphics, r: Rect, width = 3) => {
   g.strokeRect(r.x, r.y, r.w, r.h);
 };
 
+/** A sombra acompanha o alpha da silhueta, em vez de marcar um retângulo no chão. */
+const buildingShadow = (scene: Phaser.Scene, image: Phaser.GameObjects.Image) => scene.add
+  .image(image.x + 14, image.y + 10, image.texture.key, image.frame.name)
+  .setOrigin(image.originX, image.originY).setScale(image.scaleX, image.scaleY)
+  .setTintFill(0x39354f).setAlpha(0.24).setDepth(0.1);
+
 /**
- * Desenha o bairro a partir dos DADOS do mapa (gráficos simples/provisórios). Tudo estático, num único Graphics
- * sob o jogador. Os poucos textos (placa da loja, "EM OBRAS", entrada de teste) são objetos de texto à parte.
+ * Desenha o bairro a partir dos dados do mapa e da arte em final-assets.
+ * Chão e prédios usam texturas; detalhes e marcadores continuam em Graphics.
  */
 export function drawWorld(scene: Phaser.Scene, map: WorldMapData) {
+  prepareWorldArt(scene);
   const g = scene.add.graphics().setDepth(0);
 
   // Discos (árvores, fonte, vasos): Image de uma textura de círculo branca gerada uma vez e tingida. O Phaser triangula
@@ -56,23 +68,36 @@ export function drawWorld(scene: Phaser.Scene, map: WorldMapData) {
 
   // quarteirões
   for (const b of map.blocks) {
-    const color = { lawn: COLORS.lawn, garden: COLORS.garden, lot: COLORS.lot, strip: COLORS.strip, plaza: COLORS.plaza }[b.kind];
-    fillRect(g, color, b.rect);
-    if (b.kind === 'garden') {
-      g.lineStyle(4, 0x2f5010, 1);
-      for (let y = b.rect.y + 30; y < b.rect.y + b.rect.h - 20; y += 24) g.lineBetween(b.rect.x + 30, y, b.rect.x + b.rect.w - 30, y);
-    }
+    drawGround(scene, b.rect, b.kind === 'plaza' ? 'cobbles' : b.kind === 'lot' ? 'dirt' : 'grass');
+
   }
 
-  // praça: piso claro com caminhos em cruz e quatro canteiros gramados
+  // Caminhos das portas às calçadas: o destino fica legível em todas as casas.
+  for (const path of housePaths(map)) drawGround(scene, path, 'cobbles', -0.7);
+  const shopFront = { x: map.shop.rect.x - 10, y: map.shop.door.y + 4, w: map.shop.rect.w + 20, h: 94 };
+  drawGround(scene, shopFront, 'paving', -0.7);
+  drawGround(scene, { x: map.shop.door.x - 24, y: map.shop.door.y, w: 48, h: 124 }, 'cobbles', -0.65);
+  // O lote de treino conserva as cercas e a entrada; só ganha uma trilha no chão.
+  const entranceLot = map.blocks.find(b => b.id === 'q_3_0')!.rect;
+  drawGround(scene, { x: map.entrance.x - 24, y: map.entrance.y, w: 48, h: entranceLot.y + entranceLot.h - map.entrance.y }, 'dirt', -0.75);
+
+  drawDistrictGardens(scene, map);
+
+  // Praça assimétrica: bosque a oeste, terraço aberto a nordeste e jardim baixo a sudeste.
   const pz = map.plaza.rect;
   const pc = rectCenter(pz);
   const path = 28;
-  const lawn = (x0: number, y0: number, x1: number, y1: number) => fillRect(g, COLORS.plazaLawn, { x: x0, y: y0, w: x1 - x0, h: y1 - y0 });
-  lawn(pz.x + 16, pz.y + 16, pc.x - path, pc.y - path);
-  lawn(pc.x + path, pz.y + 16, pz.x + pz.w - 16, pc.y - path);
-  lawn(pz.x + 16, pc.y + path, pc.x - path, pz.y + pz.h - 16);
-  lawn(pc.x + path, pc.y + path, pz.x + pz.w - 16, pz.y + pz.h - 16);
+  const lawn = (x0: number, y0: number, x1: number, y1: number) => {
+    scene.add.rectangle((x0 + x1) / 2, (y0 + y1) / 2 + 2, x1 - x0 + 8, y1 - y0 + 8, 0x8f856d).setDepth(-0.85);
+    drawGround(scene, { x: x0, y: y0, w: x1 - x0, h: y1 - y0 }, 'grass', -0.8);
+    for (const [x, y] of [[x0 + 28, y0 + 24], [x1 - 28, y1 - 24]]) {
+      scene.add.image(x, y, URBAN_ART, 'flowers').setDisplaySize(38, 30).setDepth(0);
+    }
+  };
+  lawn(pz.x + 16, pz.y + 16, pc.x - path - 20, pc.y - path);
+  lawn(pc.x + path + 16, pz.y + 16, pz.x + pz.w - 16, pc.y - 110);
+  lawn(pz.x + 16, pc.y + path + 10, pc.x - path - 36, pz.y + pz.h - 16);
+  lawn(pc.x + path + 18, pc.y + path + 28, pz.x + pz.w - 16, pz.y + pz.h - 34);
 
   // calçadas e asfalto (calçadas de todas as vias primeiro; assim os cruzamentos ficam limpos)
   for (const r of map.roads) {
@@ -80,14 +105,32 @@ export function drawWorld(scene: Phaser.Scene, map: WorldMapData) {
     const outer = roadRect(r, map.sidewalk);
     const inner = roadRect(r);
     if (r.orientation === 'h') {
-      fillRect(g, COLORS.sidewalk, { x: outer.x, y: outer.y, w: outer.w, h: map.sidewalk });
-      fillRect(g, COLORS.sidewalk, { x: outer.x, y: inner.y + inner.h, w: outer.w, h: map.sidewalk });
+      drawGround(scene, { x: outer.x, y: outer.y, w: outer.w, h: map.sidewalk }, 'paving', -0.6);
+      drawGround(scene, { x: outer.x, y: inner.y + inner.h, w: outer.w, h: map.sidewalk }, 'paving', -0.6);
     } else {
-      fillRect(g, COLORS.sidewalk, { x: outer.x, y: outer.y, w: map.sidewalk, h: outer.h });
-      fillRect(g, COLORS.sidewalk, { x: inner.x + inner.w, y: outer.y, w: map.sidewalk, h: outer.h });
+      drawGround(scene, { x: outer.x, y: outer.y, w: map.sidewalk, h: outer.h }, 'paving', -0.6);
+      drawGround(scene, { x: inner.x + inner.w, y: outer.y, w: map.sidewalk, h: outer.h }, 'paving', -0.6);
     }
   }
-  for (const r of map.roads) fillRect(g, r.avenue ? COLORS.avenue : COLORS.asphalt, roadRect(r));
+  for (const r of map.roads) drawGround(scene, roadRect(r), 'asphalt', -0.5);
+  // Meio-fio claro e sombra rente ao asfalto dão altura às calçadas.
+  const roadDetails = scene.add.graphics().setDepth(-0.3);
+  for (const road of map.roads) for (const run of roadRuns(road, map)) {
+    const length = run.end - run.start;
+    const edge = road.width / 2;
+    if (road.orientation === 'h') {
+      fillRect(roadDetails, 0xefe6cd, { x: run.start, y: road.center - edge - 3, w: length, h: 3 });
+      fillRect(roadDetails, 0x3d3b44, { x: run.start, y: road.center - edge, w: length, h: 3 });
+      fillRect(roadDetails, 0x716c68, { x: run.start, y: road.center + edge - 3, w: length, h: 3 });
+      fillRect(roadDetails, 0xefe6cd, { x: run.start, y: road.center + edge, w: length, h: 3 });
+    } else {
+      fillRect(roadDetails, 0xefe6cd, { x: road.center - edge - 3, y: run.start, w: 3, h: length });
+      fillRect(roadDetails, 0x3d3b44, { x: road.center - edge, y: run.start, w: 3, h: length });
+      fillRect(roadDetails, 0x716c68, { x: road.center + edge - 3, y: run.start, w: 3, h: length });
+      fillRect(roadDetails, 0xefe6cd, { x: road.center + edge, y: run.start, w: 3, h: length });
+    }
+  }
+  for (const stripe of crossingStripes(map)) fillRect(roadDetails, 0xece4cb, stripe);
   if (!scene.textures.exists('tracejado-h')) {
     const dg = scene.make.graphics({ x: 0, y: 0 }, false);
     dg.fillStyle(COLORS.dash, 1);
@@ -99,65 +142,48 @@ export function drawWorld(scene: Phaser.Scene, map: WorldMapData) {
     dg.generateTexture('tracejado-v', 4, 64);
     dg.destroy();
   }
-  for (const r of map.roads.filter((x) => x.avenue)) {
-    if (r.orientation === 'h') scene.add.tileSprite((r.from + r.to) / 2, r.center, r.to - r.from, 4, 'tracejado-h').setDepth(0);
-    else scene.add.tileSprite(r.center, (r.from + r.to) / 2, 4, r.to - r.from, 'tracejado-v').setDepth(0);
+  for (const r of map.roads.filter((x) => x.avenue)) for (const run of roadRuns(r, map)) {
+    if (r.orientation === 'h') scene.add.tileSprite((run.start + run.end) / 2, r.center, run.end - run.start, 4, 'tracejado-h').setDepth(-0.28);
+    else scene.add.tileSprite(r.center, (run.start + run.end) / 2, 4, run.end - run.start, 'tracejado-v').setDepth(-0.28);
   }
 
-  // casas: telhado (bloco grande) + faixa de fachada com porta e janelas. Cada combinação de cores/lado vira uma textura
-  // pequena gerada uma vez; cada casa é uma Image (barato por quadro, ao contrário de dezenas de comandos de Graphics).
-  for (const h of map.houses) {
-    const key = `casa-${h.kind}-${h.wall.toString(16)}-${h.roof.toString(16)}-${h.facing}-${h.rect.w}x${h.rect.h}`;
-    if (!scene.textures.exists(key)) {
-      const hg = scene.make.graphics({ x: 0, y: 0 }, false);
-      const r: Rect = { x: 0, y: 0, w: h.rect.w, h: h.rect.h };
-      fillRect(hg, h.roof, r);
-      frame(hg, { x: 1, y: 1, w: r.w - 2, h: r.h - 2 });
-      const facadeH = h.kind === 'customer' ? 40 : 30;
-      const facade: Rect = h.facing === 's' ? { x: 1, y: r.h - facadeH, w: r.w - 2, h: facadeH - 1 } : { x: 1, y: 1, w: r.w - 2, h: facadeH };
-      fillRect(hg, h.wall, facade);
-      frame(hg, facade, 2);
-      const doorW = h.kind === 'customer' ? 30 : 20;
-      const doorH = h.kind === 'customer' ? 38 : 28;
-      const doorX = r.w / 2 - doorW / 2;
-      const doorY = h.facing === 's' ? r.h - doorH - 1 : 1;
-      fillRect(hg, h.kind === 'customer' ? 0x1d4ed8 : 0x78350f, { x: doorX, y: doorY, w: doorW, h: doorH });
-      for (const dx of [16, r.w - 32]) fillRect(hg, 0x93c5fd, { x: dx, y: facade.y + facade.h / 2 - 6, w: 16, h: 12 });
-      hg.lineStyle(3, 0x000000, 0.25);
-      const ridge = h.facing === 's' ? 24 : r.h - 24;
-      hg.lineBetween(10, ridge, r.w - 10, ridge);
-      hg.generateTexture(key, r.w, r.h);
-      hg.destroy();
+
+  // As duas orientações de fachada seguem o lado da porta definido pelo mapa.
+  const houseVariants = ['cream', 'sage', 'blush', 'blue'];
+  map.houses.forEach((h, index) => {
+    const variant = houseVariants[(index * 7 + Math.floor(index / 3)) % houseVariants.length];
+    const r = h.rect;
+    if (h.id === map.customer.houseId) {
+      const image = scene.add.image(map.customer.door.x, map.customer.door.y, PILOT_HOUSE_ART, 'house');
+      const ratio = image.texture.getSourceImage().width / 1312;
+      const anchor = { x: PILOT_BUILDING_ANCHORS.house.x * ratio, y: PILOT_BUILDING_ANCHORS.house.y * ratio };
+      image.setOrigin((anchor.x - image.frame.cutX) / image.frame.width, (anchor.y - image.frame.cutY) / image.frame.height);
+      // A altura da imagem inclui o telhado projetado acima da ocupação física.
+      image.setScale(r.w / image.frame.width).setDepth(worldDepthAt(r.y + r.h));
+      buildingShadow(scene, image);
+      return;
     }
-    scene.add.image(h.rect.x + h.rect.w / 2, h.rect.y + h.rect.h / 2, key).setDepth(0);
-  }
+    scene.add.ellipse(r.x + r.w / 2 + 4, r.y + r.h - 3, r.w + 10, 16, 0x39354f, 0.22).setDepth(-0.1);
+    const image = scene.add.image(r.x + r.w / 2, h.facing === 'n' ? r.y : r.y + r.h,
+      h.facing === 'n' ? NORTH_HOUSE_ART : HOUSE_ART, variant).setOrigin(0.5, h.facing === 'n' ? 0 : 1);
+    image.setScale(Math.min(r.w / image.frame.width, r.h / image.frame.height)).setDepth(0);
+  });
 
   // casa do cliente: caminho até a calçada, caixa de correio e canteiro
   const c = map.customer;
-  fillRect(g, 0xe7e5e4, { x: c.door.x - 18, y: c.door.y, w: 36, h: c.y - c.door.y + 10 });
+  // O caminho texturizado já foi desenhado com as demais casas.
   fillRect(g, 0xdc2626, { x: c.door.x + 58, y: c.door.y + 2, w: 16, h: 12 }); // caixa de correio
   fillRect(g, 0x57534e, { x: c.door.x + 64, y: c.door.y + 14, w: 4, h: 14 });
   for (const dx of [-62, -48, 48]) disc(c.door.x + dx, c.door.y + 14, 6, 0xf472b6);
 
-  // Novo Hiper: telhado verde, fachada com toldo listrado, porta, vasos e placa
+  // Fachada com porta central: coincide com o ponto de entrada existente.
   const s = map.shop.rect;
-  fillRect(g, 0x047857, s);
-  frame(g, s, 4);
-  g.lineStyle(4, 0x065f46, 1);
-  for (let y = s.y + 30; y < s.y + s.h - 90; y += 34) g.lineBetween(s.x + 12, y, s.x + s.w - 12, y);
-  const facade: Rect = { x: s.x, y: s.y + s.h - 62, w: s.w, h: 62 };
-  fillRect(g, 0xfef3c7, facade);
-  frame(g, facade, 3);
-  const stripe = 28;
-  for (let i = 0, x = s.x; x < s.x + s.w; i++, x += stripe) {
-    fillRect(g, i % 2 ? 0xffffff : 0xdc2626, { x, y: s.y + s.h - 62, w: Math.min(stripe, s.x + s.w - x), h: 22 });
-  }
-  fillRect(g, 0x064e3b, { x: map.shop.door.x - 26, y: s.y + s.h - 40, w: 52, h: 40 });
-  fillRect(g, 0xbbf7d0, { x: s.x + 40, y: s.y + s.h - 36, w: 70, h: 28 });
-  fillRect(g, 0xbbf7d0, { x: s.x + s.w - 110, y: s.y + s.h - 36, w: 70, h: 28 });
-  for (const dx of [-120, -86, 86, 120]) disc(map.shop.door.x + dx, s.y + s.h + 14, 11, 0x16a34a);
-  g.fillStyle(0x92400e, 1);
-  for (const dx of [-120, -86, 86, 120]) g.fillRect(map.shop.door.x + dx - 7, s.y + s.h + 22, 14, 10);
+  const shopImage = scene.add.image(map.shop.door.x, map.shop.door.y, SHOP_ART, 'facade');
+  const ratio = shopImage.texture.getSourceImage().width / 1430;
+  const anchor = { x: PILOT_BUILDING_ANCHORS.shop.x * ratio, y: PILOT_BUILDING_ANCHORS.shop.y * ratio };
+  shopImage.setOrigin((anchor.x - shopImage.frame.cutX) / shopImage.frame.width, (anchor.y - shopImage.frame.cutY) / shopImage.frame.height);
+  shopImage.setScale(s.w / shopImage.frame.width).setDepth(worldDepthAt(s.y + s.h));
+  buildingShadow(scene, shopImage);
 
   // Loja de Utilidades (quarteirão sul-central): telhado azul-petróleo, fachada clara voltada para a H3 (norte),
   // toldo azul e branco, porta de enrolar erguida, vitrines, caixotes e baldes na calçada
@@ -192,15 +218,11 @@ export function drawWorld(scene: Phaser.Scene, map: WorldMapData) {
   disc(ud.x + 120, u.y - 16, 10, 0x2563eb);
 
   // praça: fonte, bancos e árvores (copas sob o jogador; só o tronco é sólido)
-  const f = map.plaza.fountain;
-  disc(f.x, f.y, f.r, 0x78716c);
-  disc(f.x, f.y, f.r - 10, 0x38bdf8);
-  disc(f.x, f.y, 12, 0x7dd3fc);
-  for (const b of map.plaza.benches) fillRect(g, 0x78350f, { x: b.x - 22, y: b.y - 7, w: 44, h: 14 });
+  drawNeighborhoodLife(scene, map);
+  for (const b of map.plaza.benches) scene.add.image(b.x, b.y + 7, URBAN_ART, 'bench').setOrigin(0.5, 1).setDisplaySize(58, 36).setDepth(0);
   for (const t of map.plaza.trees) {
-    fillRect(g, 0x713f12, { x: t.x - 7, y: t.y - 10, w: 14, h: 28 });
-    disc(t.x, t.y - 22, 36, 0x166534);
-    disc(t.x - 10, t.y - 30, 18, 0x22c55e);
+    scene.add.ellipse(t.x + 5, t.y + 9, 64, 17, 0x39354f, 0.22).setDepth(-0.1);
+    scene.add.image(t.x, t.y + 18, URBAN_ART, 'tree-medium').setOrigin(0.5, 1).setDisplaySize(96, 128).setDepth(worldDepthAt(t.y + 18));
   }
 
   // cercas
@@ -224,8 +246,8 @@ export function drawWorld(scene: Phaser.Scene, map: WorldMapData) {
   }
 
   // borda: árvores densas (decorativas; a margem não é caminhável)
-  const borderColors = [0x14532d, 0x166534, 0x15803d];
-  map.borderTrees.forEach((t, i) => disc(t.x, t.y, t.r, borderColors[i % 3]));
+  map.borderTrees.forEach((t, i) => scene.add.image(t.x, t.y + t.r, URBAN_ART, i % 3 ? 'tree-small' : 'tree-medium')
+    .setOrigin(0.5, 1).setDisplaySize(t.r * 2.2, t.r * 3).setDepth(0));
 
   // poucos textos: placa da loja, entrada de teste e as barreiras
   const label = (x: number, y: number, text: string, color: string, bg: string, size = 14) =>
@@ -233,7 +255,6 @@ export function drawWorld(scene: Phaser.Scene, map: WorldMapData) {
       .text(x, y, text, { fontSize: `${size}px`, fontStyle: 'bold', color, backgroundColor: bg, padding: { x: 8, y: 4 } })
       .setOrigin(0.5)
       .setDepth(2);
-  label(map.shop.door.x, map.shop.rect.y + map.shop.rect.h - 84, 'NOVO HIPER', '#fff7ed', '#065f46', 20);
   label(map.utilities.door.x, map.utilities.rect.y + 92, 'UTILIDADES', '#f0f9ff', '#1d4ed8', 18);
   for (const gate of map.gates) {
     const c = rectCenter(gate.rect);

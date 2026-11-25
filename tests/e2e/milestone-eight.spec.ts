@@ -1,0 +1,75 @@
+import { expect, test, type Page } from '@playwright/test';
+import { login, openAdventure, state, teleport, teleportToGoal, waitForScene, pickUpActiveOrder } from './helpers';
+import { closeSuiteOrders, createSuiteOrder, suiteId } from './suiteData';
+import { ENTRANCE_ZONE } from '../../src/phaser-game/config/worldConfig';
+import { PLATFORM, GOAL_UI } from '../../src/phaser-game/config/platformConfig';
+import { REARM_DISTANCE } from '../../src/phaser-game/logic/worldEntrance';
+
+const enter = async (page: Page) => { await teleport(page, ENTRANCE_ZONE.x, ENTRANCE_ZONE.y); await waitForScene(page, 'platform'); };
+const snapshot = async (page: Page) => Promise.all(['/api/plants', '/api/orders', '/api/deliveries', '/api/cash'].map(async url => (await page.request.get(url)).json()));
+
+test('N05/N06: Enter segurado não confirma; concluir e abandonar preservam pedido retirado e dados oficiais', async ({ page }) => {
+  await login(page); await closeSuiteOrders(page);
+  const plant = await (await page.request.post('/api/plants', { data: { id: suiteId('platform'), name: 'Planta da plataforma', price: 20, stock_quantity: 5, image_path: '/pwa-192x192.png' } })).json();
+  const order = await createSuiteOrder(page, { plantId: plant.id });
+  await openAdventure(page);
+  await page.locator('#btn-adventure-fullscreen').click();
+  await page.waitForFunction(() => Boolean(document.fullscreenElement));
+  await pickUpActiveOrder(page);
+  const before = await snapshot(page);
+  await enter(page);
+  await expect(page.locator('#btn-platform-exit')).toBeVisible();
+  await page.evaluate(() => (document.activeElement as HTMLElement)?.blur());
+  await page.keyboard.down('Enter');
+  await teleportToGoal(page);
+  await page.waitForFunction(() => window.__NH_ADVENTURE__?.getState().platform?.confirmationReady && window.__NH_ADVENTURE__?.getState().platform?.confirmationVisible);
+  await page.evaluate(() => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', repeat: true, bubbles: true })));
+  await page.waitForTimeout(400);
+  expect((await state(page)).scene).toBe('platform');
+  await page.screenshot({ path: 'docs/evidence/milestone-eight/percurso-concluido.png' });
+  expect(await snapshot(page)).toEqual(before);
+  await page.keyboard.up('Enter'); await page.keyboard.press('Enter');
+  await waitForScene(page, 'world');
+  expect((await state(page)).delivery?.activeOrderId).toBe(order.id);
+  expect(await snapshot(page)).toEqual(before);
+  await page.waitForTimeout(1000); expect((await state(page)).scene).toBe('world');
+  await teleport(page, ENTRANCE_ZONE.x, ENTRANCE_ZONE.y + REARM_DISTANCE + 60);
+  await page.waitForFunction(() => window.__NH_ADVENTURE__?.getState().entranceArmed);
+  await enter(page);
+  await page.locator('#btn-platform-exit').click();
+  await waitForScene(page, 'world');
+  expect(await snapshot(page)).toEqual(before);
+  expect((await state(page)).delivery?.activeOrderId).toBe(order.id);
+  await page.reload(); await openAdventure(page);
+  expect(await snapshot(page)).toEqual(before);
+  await page.waitForFunction(id => window.__NH_ADVENTURE__?.getState().delivery?.activeOrderId === id, order.id);
+});
+
+test.describe('toque na plataforma', () => {
+  test.use({ hasTouch: true });
+  test('N02/N04: andar, saltar, aterrissar e voltar ao bairro pelo botão', async ({ page }) => {
+    await login(page); await openAdventure(page);
+    await page.locator('#btn-adventure-fullscreen').click();
+    await page.waitForFunction(() => Boolean(document.fullscreenElement));
+    await enter(page);
+    const right = page.getByRole('button', { name: 'Andar para a direita', exact: true });
+    const jump = page.getByRole('button', { name: 'Pular', exact: true });
+    const start = (await state(page)).player!;
+    await right.dispatchEvent('touchstart'); await page.waitForTimeout(350);
+    await page.waitForFunction(() => window.__NH_ADVENTURE__?.getState().sprite?.anim === 'walk-right');
+    await right.dispatchEvent('touchend');
+    expect((await state(page)).player!.x).toBeGreaterThan(start.x + 20);
+    await jump.dispatchEvent('touchstart');
+    await page.waitForFunction(() => window.__NH_ADVENTURE__?.getState().sprite?.anim === 'jump');
+    await jump.dispatchEvent('touchend');
+    await page.waitForFunction(y => Math.abs((window.__NH_ADVENTURE__?.getState().player?.y ?? 0) - y) < 3 && window.__NH_ADVENTURE__?.getState().sprite?.anim === 'idle-right', PLATFORM.groundY - PLATFORM.playerHeight / 2);
+    await page.screenshot({ path: 'docs/evidence/milestone-eight/controles-toque.png' });
+    await teleportToGoal(page);
+    await page.waitForFunction(() => window.__NH_ADVENTURE__?.getState().platform?.confirmationReady && window.__NH_ADVENTURE__?.getState().platform?.confirmationVisible);
+    const box = (await page.locator('canvas').boundingBox())!;
+    await page.touchscreen.tap(box.x + box.width / 2, box.y + box.height * GOAL_UI.titleYRatio + GOAL_UI.buttonOffsetY);
+    await waitForScene(page, 'world');
+    await page.waitForTimeout(1000); expect((await state(page)).scene).toBe('world');
+    expect(await page.evaluate(() => window.__NH_ADVENTURE__?.liveGames())).toBe(1);
+  });
+});

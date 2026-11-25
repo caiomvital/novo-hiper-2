@@ -5,7 +5,6 @@ import { PLATFORM } from './platformConfig';
  * já validada (PLATFORM.playerWidth x playerHeight, em pixels do MUNDO). Tudo aqui é visual.
  */
 export const BERNARDO_SPRITE = {
-  basePath: '/assets/bernardo-sprites/platform',
   frameWidth: 160,
   frameHeight: 180,
   /** Escala visual: o Bernardo de ~130px nos frames vira ~65px no cenário. */
@@ -56,4 +55,4 @@ export const BERNARDO_ANIMS = {
 } as const;
 
 /** O pulo usa um frame estático escolhido pela velocidade vertical (ver logic/animation.ts). */
-export const JUMP_FRAMES = { rising: 1, risingSlow: 2, apex: 3, falling: 4 } as const;
+export const JUMP_FRAMES = { rising: 1, risingSlow: 2, apex: 4, falling: 7 } as const;

@@ -45,6 +45,26 @@ describe('caixa — leitura', () => {
     expect((await s.get('/api/cash/summary')).body.balance).toBe(0.3);
     expect((await s.db.get('SELECT SUM(amount) AS s FROM cash_transactions')).s).not.toBe(0.3); // por isso D8: centavos nas tabelas novas
   });
+
+  it('histórico identifica todos os itens, quantidades e preços congelados, preservando destino do pedido', async () => {
+    const p = await createPlant(s, { name: 'Samambaia', price: 20 });
+    const other = await createPlant(s, { name: 'Cacto', price: 5 });
+    const o = await createOrder(s, [{ plant_id: p.id, quantity: 2 }, { plant_id: other.id, quantity: 1 }]);
+    await s.db.run('UPDATE plants SET price = 99 WHERE id = ?', p.id);
+    await s.db.run('UPDATE customers SET destination = ? WHERE id = ?', 'outro-destino', o.customer_id);
+    const d = await startDelivery(s, o.id);
+    await s.post(`/api/deliveries/${d.id}/finish`);
+    await seedTx('compra', 10, 'upgrade_purchase');
+    const list = (await s.get('/api/cash')).body;
+    expect(list.balance).toBe(35);
+    expect(list.totalSales).toBe(45);
+    const sale = list.transactions.find((t: any) => t.order_id === o.id);
+    expect(sale.destination_name).toBe(o.destination_id);
+    expect(sale.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({ plant_id: p.id, plant_name: 'Samambaia', quantity: 2, unit_price: 20 }),
+      expect.objectContaining({ plant_id: other.id, plant_name: 'Cacto', quantity: 1, unit_price: 5 }),
+    ]));
+  });
 });
 
 describe('POST /api/cash/transactions — DESATIVADA na 1E (nenhum crédito arbitrário)', () => {

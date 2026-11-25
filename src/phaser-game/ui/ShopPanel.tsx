@@ -1,4 +1,5 @@
 import React, { useEffect, useRef } from 'react';
+import { useModalFocus } from '../../hooks/useModalFocus';
 import { Hammer, Store, X, Check } from 'lucide-react';
 import type { ShopSnapshot, ShopUpgradeView } from '../../services/api';
 import { formatBRL } from '../logic/format';
@@ -12,19 +13,16 @@ interface ShopPanelProps {
   onClose: () => void;
   onBuy: (id: string) => void;
   onInstall: (id: string) => void;
+  onGuideToStore?: () => void;
 }
 
 /** Painel HTML (dentro de #adventure-root, então funciona em tela cheia). O saldo e os estados vêm do backend. */
-export const ShopPanel: React.FC<ShopPanelProps> = ({ mode, shop, busy, message, onClose, onBuy, onInstall }) => {
+export const ShopPanel: React.FC<ShopPanelProps> = ({ mode, shop, busy, message, onClose, onBuy, onInstall, onGuideToStore }) => {
+  useModalFocus(true, 'shop-panel', mode === 'shop' ? 'Loja de Utilidades' : 'Instalar melhorias', onClose);
   const closeRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     closeRef.current?.focus();
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
 
   const isShop = mode === 'shop';
@@ -77,7 +75,7 @@ export const ShopPanel: React.FC<ShopPanelProps> = ({ mode, shop, busy, message,
   };
 
   return (
-    <div className="absolute inset-0 z-40 flex items-center justify-center p-3 bg-stone-950/70" role="dialog" aria-modal="true" aria-labelledby="shop-title">
+    <div className="absolute inset-0 z-40 flex items-center justify-center p-3 bg-stone-950/70">
       <div id="shop-panel" className="w-full max-w-md max-h-full overflow-auto rounded-2xl bg-stone-900 border border-stone-700 shadow-2xl text-stone-100">
         <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-stone-700">
           <div className="flex items-center gap-2 min-w-0">
@@ -100,6 +98,8 @@ export const ShopPanel: React.FC<ShopPanelProps> = ({ mode, shop, busy, message,
           </div>
         </div>
 
+        {isShop && <p className="px-4 pt-3 text-sm text-stone-300">Depois de comprar, volte à Novo Hiper e entre na loja. Instale a melhoria no balcão.</p>}
+
         <ul className="px-4 py-3 space-y-3">
           {items.length === 0 && <li className="text-sm text-stone-400">Nada por aqui por enquanto.</li>}
           {items.map((u) => (
@@ -113,6 +113,8 @@ export const ShopPanel: React.FC<ShopPanelProps> = ({ mode, shop, busy, message,
             </li>
           ))}
         </ul>
+
+        {isShop && onGuideToStore && shop?.upgrades.some(u => u.state === 'pending') && <button id="btn-shop-guide-store" disabled={busy} onClick={onGuideToStore} className="mx-4 mb-4 min-h-11 rounded-xl bg-amber-400 px-4 py-3 font-bold text-stone-950 disabled:opacity-60">Voltar à Novo Hiper para instalar</button>}
 
         {message && (
           <div

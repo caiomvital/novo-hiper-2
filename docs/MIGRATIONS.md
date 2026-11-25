@@ -42,3 +42,7 @@ Garantias:
 - Sem *down/rollback* de migration: o caminho de volta é restaurar o backup (procedimento em BACKUP_SQLITE.md).
 - O SQLite não permite `DROP COLUMN` seguro em todas as versões; migrations destrutivas exigem recriar tabela (não há nenhuma).
 - Duas instâncias abrindo o mesmo arquivo ao mesmo tempo: a segunda pode receber `SQLITE_BUSY` (não há `busy_timeout` configurado). Hoje só há um processo escritor.
+
+## Versão 7 — confirmação do primeiro arco
+
+`007_story_acknowledgements.ts` adiciona `story_acknowledgements`, sem alterar estoque, pedidos ou caixa. A confirmação exige a conquista oficial `bairro_vivo` e é idempotente. O retorno à interface anterior deve usar uma imagem com backend compatível com a versão 7; uma imagem com migrations somente até 6 não abre este banco.

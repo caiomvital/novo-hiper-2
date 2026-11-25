@@ -2,6 +2,7 @@ import type { DbWrapper } from '../db';
 import { evaluateInTransaction } from '../progress/milestones';
 import { isModernDestination } from '../../src/shared/destinations';
 import { ROSTER, RosterEntry } from '../../src/shared/roster';
+import { MARIA_CUSTOMER_ID, MARIA_STORY_ID } from '../../src/shared/residentStory';
 import { fetchOrderView, insertOrderRows } from './createOrder';
 
 /**
@@ -137,20 +138,26 @@ async function decide(db: DbWrapper, now: number, rng: () => number): Promise<En
   if (customers.length === 0) return { created: false, reason: 'no_customers' };
 
   // 6. escolhas simples: não repete o último cliente/planta quando há alternativa
+  const pendingStory = await db.get('SELECT id FROM resident_stories WHERE id = ? AND order_id IS NULL', MARIA_STORY_ID);
   const customerPool = customers.filter((c) => c.id !== last?.customer_id);
-  const customer = pick(customerPool.length > 0 ? customerPool : customers, rng);
+  const customer = pendingStory ? ROSTER.find(c => c.id === MARIA_CUSTOMER_ID)! : pick(customerPool.length > 0 ? customerPool : customers, rng);
   const plantPool = available.filter((p: any) => p.id !== last?.plant_id);
   const plant = pick(plantPool.length > 0 ? plantPool : available, rng);
 
-  if (!autogenEnabled()) return { created: false, reason: 'disabled' };
+  // Uma história aceita é uma encomenda solicitada pelo jogador, inclusive com autogeração desligada.
+  if (!autogenEnabled() && !pendingStory) return { created: false, reason: 'disabled' };
 
   // 7. cria: cliente apresentado, preço da planta PERSISTIDA, número e destino atribuídos aqui
   await introduceCustomer(db, customer, now);
   const orderId = await insertOrderRows(
     db,
-    { customerId: customer.id, items: [{ plant_id: plant.id, quantity: 1, unit_price: plant.price }], total: Math.round(plant.price * 100) / 100 },
+    { customerId: customer.id, items: [{ plant_id: plant.id, quantity: 1, unit_price: plant.price }], total: Math.round(plant.price * 100) / 100, message: pendingStory ? 'Quero deixar a entrada da minha casa mais acolhedora. Uma planta da sua loja vai começar meu cantinho verde! — Dona Maria' : null },
     now
   );
+  if (pendingStory) {
+    const identity = await db.get('SELECT name, image_path FROM plants WHERE id = ?', plant.id);
+    await db.run('UPDATE resident_stories SET order_id = ?, plant_name = ?, plant_photo_url = ? WHERE id = ? AND order_id IS NULL', [orderId, identity.name, identity.image_path, MARIA_STORY_ID]);
+  }
   return { created: true, order: await fetchOrderView(db, orderId) };
 }
 

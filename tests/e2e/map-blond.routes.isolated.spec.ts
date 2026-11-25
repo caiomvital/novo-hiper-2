@@ -1,0 +1,66 @@
+import { expect, test } from '@playwright/test';
+import { login, openAdventure, state, teleport, holdKeys, pickUpActiveOrder, teleportToGoal, waitForScene } from './helpers';
+import { closeSuiteOrders, createSuiteOrder, suiteId } from './suiteData';
+import { WORLD_MAP } from '../../src/phaser-game/config/worldMap';
+import { HOUSE_CATALOG } from '../../src/phaser-game/config/houseCatalog';
+
+test.use({ hasTouch: true, viewport: { width: 900, height: 620 } });
+test('novo chão e Bernardo loiro preservam colisões, retirada, plataforma e entrega', async ({ page }) => {
+  test.setTimeout(240_000);
+  page.on('pageerror', e => console.error('game error:', e.message));
+  const blondImages = new Set<string>();
+  page.on('response', r => { if (r.url().includes('/blond-v2/') && r.headers()['content-type']?.includes('image/png')) blondImages.add(new URL(r.url()).pathname); });
+  await login(page); await closeSuiteOrders(page);
+  const plant = await (await page.request.post('/api/plants', { data: { id: suiteId('map-art'), name: 'Planta do novo bairro', price: 40, stock_quantity: 5, image_path: '/pwa-192x192.png' } })).json();
+  const order = await createSuiteOrder(page, { plantId: plant.id, destination: 'bairro1/house_007' });
+  const before = await (await page.request.get('/api/cash')).json();
+  await openAdventure(page);
+  await page.locator('#btn-adventure-fullscreen').click();
+  await page.waitForFunction(() => Boolean(document.fullscreenElement));
+  await page.waitForFunction(id => window.__NH_ADVENTURE__?.getState().delivery?.activeOrderId === id, order.id);
+  expect((await state(page)).sprite!.body.width).toBe(32);
+  expect((await state(page)).sprite!.body.height).toBe(44);
+  expect((await state(page)).sprite!.scale).toBe(1);
+  async function capture(x: number, y: number, name: string) {
+    await teleport(page, x, y);
+    await page.waitForFunction(() => {
+      const s = window.__NH_ADVENTURE__?.getState(), c = s?.camera;
+      return c && s?.player && Math.abs(s.player.x - c.scrollX - c.width / 2) < 12 && Math.abs(s.player.y - c.scrollY - c.height / 2) < 12;
+    });
+    await page.screenshot({ path: `docs/evidence/map-blond/${name}.png` });
+  }
+  await capture(1032, 1120, 'loja');
+  await capture(1360, 1200, 'cruzamento');
+  await capture(1768, 1050, 'praca');
+  console.log('mapa: loja, cruzamento e praça capturados');
+  await teleport(page, WORLD_MAP.shop.rect.x - 50, 900);
+  await holdKeys(page, ['ArrowRight'], 450);
+  expect((await state(page)).player!.x).toBeLessThanOrEqual(WORLD_MAP.shop.rect.x - 16 + 1);
+  await pickUpActiveOrder(page);
+  const house = HOUSE_CATALOG.find(h => h.destinationId === order.destination_id)!;
+  expect((await state(page)).delivery!.customerAppearance?.x).toBe(house.deliveryPoint.x);
+  expect((await state(page)).delivery!.customerAppearance?.y).toBe(house.deliveryPoint.y);
+  expect((await (await page.request.get('/api/cash')).json()).balance).toBe(before.balance);
+  expect((await (await page.request.get(`/api/plants/${plant.id}`)).json()).stock_quantity).toBe(5);
+  await page.locator('#btn-start-delivery-route').click(); await waitForScene(page, 'platform');
+  await page.setViewportSize({ width: 844, height: 390 });
+  await page.waitForFunction(() => window.__NH_ADVENTURE__?.getState().platform?.grounded);
+  await holdKeys(page, ['Space'], 120);
+  expect((await state(page)).sprite!.body.width).toBe(28);
+  expect((await state(page)).sprite!.body.height).toBe(44);
+  expect((await state(page)).sprite!.scale).toBe(.5);
+  await page.screenshot({ path: 'docs/evidence/map-blond/plataforma-loiro.png' });
+  expect([...blondImages].some(url => url.endsWith('/bernardo-topdown.png'))).toBe(true);
+  expect([...blondImages].filter(url => url.includes('/platform/'))).toHaveLength(6);
+  await teleportToGoal(page);
+  await page.waitForFunction(() => window.__NH_ADVENTURE__?.getState().platform?.confirmationVisible);
+  await page.screenshot({ path: 'docs/evidence/map-blond/comemoracao-loiro.png' });
+  await page.keyboard.press('Enter'); await waitForScene(page, 'world');
+  await page.waitForFunction(() => window.__NH_ADVENTURE__?.getState().delivery?.near);
+  await page.keyboard.press('KeyE');
+  await page.waitForFunction(() => window.__NH_ADVENTURE__?.getState().delivery?.phase === 'done');
+  const after = await (await page.request.get('/api/cash')).json();
+  expect(after.balance).toBe(before.balance + 40);
+  expect(after.transactions.filter((t: any) => t.order_id === order.id)).toHaveLength(1);
+  expect((await (await page.request.get(`/api/plants/${plant.id}`)).json()).stock_quantity).toBe(4);
+});

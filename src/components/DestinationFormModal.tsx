@@ -1,3 +1,4 @@
+import { useModalFocus } from '../hooks/useModalFocus';
 import React, { useState, useEffect } from 'react';
 import { DeliveryDestination } from '../types';
 import { generateRealisticCoordinatesForAddress } from '../services/storage';
@@ -39,6 +40,7 @@ export const DestinationFormModal: React.FC<DestinationFormModalProps> = ({
     setErrorMsg(null);
   }, [initialDestination, isOpen]);
 
+  useModalFocus(isOpen, 'destination-form-modal', 'Cadastro de endereço', onClose);
   if (!isOpen) return null;
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -64,15 +66,17 @@ export const DestinationFormModal: React.FC<DestinationFormModalProps> = ({
       name: trimmedName,
       address: trimmedAddress,
       type,
-      distanceKm: initialDestination?.distanceKm || geo.distanceKm,
-      lat: initialDestination?.lat || geo.lat,
-      lng: initialDestination?.lng || geo.lng,
+      distanceKm: initialDestination?.address === trimmedAddress ? initialDestination.distanceKm : geo.distanceKm,
+      lat: initialDestination?.address === trimmedAddress ? initialDestination.lat : geo.lat,
+      lng: initialDestination?.address === trimmedAddress ? initialDestination.lng : geo.lng,
       description: `Endereço de entrega para ${trimmedName} (${trimmedAddress}).`,
       notes: notes.trim() || undefined,
       isCustom: true,
       createdAt: initialDestination?.createdAt || Date.now(),
     };
 
+    try { onSave(destination); }
+    catch (error) { setErrorMsg(error instanceof Error ? error.message : 'Não foi possível salvar o endereço. Tente novamente.'); return; }
     sounds.playSavePlant();
     try {
       confetti({
@@ -83,7 +87,6 @@ export const DestinationFormModal: React.FC<DestinationFormModalProps> = ({
       });
     } catch {}
 
-    onSave(destination);
     onClose();
   };
 
@@ -127,6 +130,7 @@ export const DestinationFormModal: React.FC<DestinationFormModalProps> = ({
 
         {/* Form Body */}
         <form onSubmit={handleSubmit} className="p-5 overflow-y-auto space-y-4 flex-1">
+          <p className="text-xs text-stone-600">Salvo somente neste navegador. O pino é ilustrativo e não representa a localização exata do endereço.</p>
           {errorMsg && (
             <div className="p-3.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs sm:text-sm flex items-start gap-2">
               <AlertCircle className="w-4 h-4 text-rose-600 flex-shrink-0 mt-0.5" />

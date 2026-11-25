@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import L from 'leaflet';
+import 'leaflet/dist/leaflet.css';
 import { Plant, DeliveryDestination, DeliveryRecord, CustomerOrder } from '../types';
 import { NOVO_HIPER_HEADQUARTERS, formatPrice } from '../services/storage';
 import { sounds } from '../services/sound';
@@ -29,12 +30,13 @@ import {
   AlertTriangle
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
+const escapeMapText = (value: string) => value.replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]!));
 
 interface DeliveryMapProps {
   plants: Plant[];
   destinations: DeliveryDestination[];
   onOpenAddPlant: () => void;
-  onDeliveryComplete: (record: DeliveryRecord, linkedOrderId?: string) => void;
+  onDeliveryComplete: (record: DeliveryRecord, linkedOrderId?: string) => Promise<void>;
   recentDeliveries: DeliveryRecord[];
   onSaveDestination: (destination: DeliveryDestination) => void;
   onDeleteDestination: (id: string) => void;
@@ -65,7 +67,10 @@ export const DeliveryMap: React.FC<DeliveryMapProps> = ({
     activeOrder?.plantId || plants[0]?.id || ''
   );
   const [isDelivering, setIsDelivering] = useState(false);
+  const deliveringRef = useRef(false);
+  const [deliveryError, setDeliveryError] = useState<string | null>(null);
   const [completedDelivery, setCompletedDelivery] = useState<DeliveryRecord | null>(null);
+  const [mapUnavailable, setMapUnavailable] = useState(false);
 
   // Sincroniza destino e planta se um pedido for selecionado
   useEffect(() => {
@@ -88,13 +93,13 @@ export const DeliveryMap: React.FC<DeliveryMapProps> = ({
 
   // Fallback to first destination if current selection is deleted
   useEffect(() => {
-    if (!destinations.some((d) => d.id === selectedDestinationId) && destinations.length > 0) {
-      setSelectedDestinationId(destinations[0].id);
+    if (!activeOrder && !destinations.some((d) => d.id === selectedDestinationId)) {
+      setSelectedDestinationId(destinations[0]?.id || '');
     }
-  }, [destinations, selectedDestinationId]);
+  }, [destinations, selectedDestinationId, activeOrder]);
 
   const selectedDestination =
-    destinations.find((d) => d.id === selectedDestinationId) || destinations[0] || null;
+    destinations.find((d) => d.id === (activeOrder?.destinationId ?? completedDelivery?.destinationId ?? selectedDestinationId)) || null;
 
   // Sync selected plant if plants list updates
   useEffect(() => {
@@ -103,7 +108,7 @@ export const DeliveryMap: React.FC<DeliveryMapProps> = ({
     }
   }, [plants, selectedPlantId]);
 
-  const selectedPlant = plants.find((p) => p.id === selectedPlantId) || plants[0] || null;
+  const selectedPlant = plants.find((p) => p.id === (activeOrder?.plantId ?? completedDelivery?.plantId ?? selectedPlantId)) || (activeOrder || completedDelivery ? null : plants[0]) || null;
 
   // Initialize Leaflet Map
   useEffect(() => {
@@ -118,11 +123,12 @@ export const DeliveryMap: React.FC<DeliveryMapProps> = ({
     });
 
     // Realistic OpenStreetMap / CartoDB Voyager clean tile layer
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+    const tiles = L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
       attribution: '&copy; OpenStreetMap contributors &copy; CARTO',
       maxZoom: 19,
       subdomains: 'abcd',
     }).addTo(map);
+    tiles.on('tileerror', () => setMapUnavailable(true));
 
     mapInstanceRef.current = map;
 
@@ -177,9 +183,9 @@ export const DeliveryMap: React.FC<DeliveryMapProps> = ({
       const destIcon = L.divIcon({
         className: 'custom-dest-pin',
         html: `
-          <div id="pin-${dest.id}" style="background:${badgeColor};color:#ffffff;padding:5px 9px;border-radius:10px;border:2px solid ${borderCol};box-shadow:0 3px 10px rgba(0,0,0,0.25);font-family:'Plus Jakarta Sans',sans-serif;font-weight:700;font-size:11px;display:flex;align-items:center;gap:5px;white-space:nowrap;cursor:pointer;transform:${isSelected ? 'scale(1.08)' : 'scale(1)'};transition:all 0.2s;">
+          <div id="pin-${escapeMapText(dest.id)}" style="background:${badgeColor};color:#ffffff;padding:5px 9px;border-radius:10px;border:2px solid ${borderCol};box-shadow:0 3px 10px rgba(0,0,0,0.25);font-family:'Plus Jakarta Sans',sans-serif;font-weight:700;font-size:11px;display:flex;align-items:center;gap:5px;white-space:nowrap;cursor:pointer;transform:${isSelected ? 'scale(1.08)' : 'scale(1)'};transition:all 0.2s;">
             <span style="font-size:11px;">${iconSymbol}</span>
-            <span>${dest.name}</span>
+            <span>${escapeMapText(dest.name)}</span>
           </div>
         `,
         iconSize: [120, 32],
@@ -188,26 +194,30 @@ export const DeliveryMap: React.FC<DeliveryMapProps> = ({
 
       const marker = L.marker([dest.lat, dest.lng], { icon: destIcon })
         .addTo(map)
-        .bindPopup(`<b>${dest.name}</b><br/>${dest.address}${dest.notes ? `<br/><i>Obs: ${dest.notes}</i>` : ''}`);
+        .bindPopup(`<b>${escapeMapText(dest.name)}</b><br/>${escapeMapText(dest.address)}${dest.notes ? `<br/><i>Obs: ${escapeMapText(dest.notes)}</i>` : ''}`);
 
       marker.on('click', () => {
+        if (activeOrder) return;
+        setCompletedDelivery(null);
         sounds.playPlim();
         setSelectedDestinationId(dest.id);
       });
 
       markersRef.current[dest.id] = marker;
     });
-  }, [destinations, selectedDestinationId]);
+  }, [destinations, selectedDestinationId, activeOrder]);
 
   // Update Route Polyline whenever selected destination changes
   useEffect(() => {
     const map = mapInstanceRef.current;
-    if (!map || !selectedDestination) return;
+    if (!map) return;
 
     // Remove existing polyline
     if (routeLayerRef.current) {
       map.removeLayer(routeLayerRef.current);
+      routeLayerRef.current = null;
     }
+    if (!selectedDestination) return;
 
     // Street route simulation: midpoint dogleg for realism
     const start: [number, number] = [NOVO_HIPER_HEADQUARTERS.lat, NOVO_HIPER_HEADQUARTERS.lng];
@@ -229,6 +239,8 @@ export const DeliveryMap: React.FC<DeliveryMapProps> = ({
   }, [selectedDestination]);
 
   const handleSelectDestination = (dest: DeliveryDestination) => {
+    if (activeOrder) return;
+    setCompletedDelivery(null);
     sounds.playPlim();
     setSelectedDestinationId(dest.id);
   };
@@ -263,50 +275,28 @@ export const DeliveryMap: React.FC<DeliveryMapProps> = ({
     setDestinationToDelete(null);
   };
 
-  const handleConfirmDelivery = () => {
-    if (!selectedPlant || !selectedDestination) return;
-    // Entrega avulsa (sem pedido) foi desativada: dinheiro só entra pelo fluxo de pedido/entrega
-    if (!activeOrder) return;
-
-    if ((selectedPlant.stock ?? 0) <= 0) {
-      sounds.playPop();
-      return;
-    }
-
+  const handleConfirmDelivery = async () => {
+    if (!selectedPlant || !activeOrder || deliveringRef.current) return;
+    if ((selectedPlant.stock ?? 0) < activeOrder.quantity) return;
+    deliveringRef.current = true;
     setIsDelivering(true);
-
-    setTimeout(() => {
-      const record: DeliveryRecord = {
-        id: 'ent_' + Date.now(),
-        plantId: selectedPlant.id,
-        plantName: selectedPlant.name,
-        plantPrice: selectedPlant.price,
-        plantPhotoUrl: selectedPlant.photoUrl,
-        destinationId: selectedDestination.id,
-        destinationName: activeOrder 
-          ? `${activeOrder.customerName} (${selectedDestination.name})` 
-          : selectedDestination.name,
-        destinationAddress: activeOrder 
-          ? activeOrder.customerAddress 
-          : selectedDestination.address,
-        timestamp: Date.now(),
-        status: 'entregue',
-      };
-
+    setDeliveryError(null);
+    const record: DeliveryRecord = {
+      id: 'ent_' + Date.now(), plantId: activeOrder.plantId,
+      plantName: activeOrder.plantName, plantPrice: activeOrder.totalPrice,
+      plantPhotoUrl: selectedPlant.photoUrl, destinationId: activeOrder.destinationId,
+      destinationName: activeOrder.customerName, destinationAddress: activeOrder.customerAddress,
+      timestamp: Date.now(), status: 'entregue',
+    };
+    try {
+      await onDeliveryComplete(record, activeOrder.id);
       sounds.playDeliverySuccess();
-      try {
-        confetti({
-          particleCount: 55,
-          spread: 65,
-          origin: { y: 0.5 },
-          colors: ['#059669', '#10b981', '#34d399', '#2563eb', '#f59e0b'],
-        });
-      } catch {}
-
-      onDeliveryComplete(record, activeOrder?.id);
+      try { confetti({ particleCount: 55, spread: 65, origin: { y: 0.5 } }); } catch {}
       setCompletedDelivery(record);
-      setIsDelivering(false);
-    }, 700);
+    } catch (error) {
+      setDeliveryError(error instanceof Error && !(error instanceof TypeError) && !['TimeoutError', 'AbortError'].includes(error.name)
+        ? error.message : 'Não foi possível confirmar a entrega. Confira sua conexão e tente novamente.');
+    } finally { deliveringRef.current = false; setIsDelivering(false); }
   };
 
   const getDestinationIcon = (type: DeliveryDestination['type'], isCustom?: boolean) => {
@@ -385,7 +375,7 @@ export const DeliveryMap: React.FC<DeliveryMapProps> = ({
                 onClick={onClearActiveOrder}
                 className="text-xs font-semibold text-emerald-200 hover:text-white bg-white/10 hover:bg-white/20 px-3.5 py-2 rounded-xl transition-all cursor-pointer whitespace-nowrap"
               >
-                Trocar p/ Entrega Livre
+                Consultar outros endereços
               </button>
             )}
           </div>
@@ -407,7 +397,7 @@ export const DeliveryMap: React.FC<DeliveryMapProps> = ({
               Mapa de Entregas em Olinda
             </h2>
             <p className="text-xs text-stone-500 mt-0.5">
-              Sede no Carmo • Entregas para Amparo, Varadouro, Bairro Novo, Casa Caiada e toda a cidade
+              Este mapa geográfico é diferente do bairro fictício da Aventura. Pinos e trajetos são ilustrativos, sem navegação por ruas ou localização do aparelho.
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -427,6 +417,8 @@ export const DeliveryMap: React.FC<DeliveryMapProps> = ({
           </div>
         </div>
 
+        {activeOrder && !selectedDestination && <p id="map-order-destination" className="mb-3 rounded-xl bg-amber-50 p-3 text-sm text-amber-900">Este pedido vai para {activeOrder.customerName}, no bairro da Aventura. Ele não tem um ponto neste mapa de Olinda. Você pode concluir o pedido abaixo ou entregar na Aventura.</p>}
+        {mapUnavailable && <p role="status" className="mb-3 rounded-xl bg-amber-50 p-3 text-sm text-amber-900">O mapa externo não carregou. A lista de endereços e os pedidos continuam disponíveis.</p>}
         {/* Real Geographic Leaflet Map */}
         <div className="relative w-full h-[320px] sm:h-[400px] rounded-2xl overflow-hidden border border-stone-200 shadow-inner">
           <div ref={mapContainerRef} className="w-full h-full" />
@@ -456,8 +448,9 @@ export const DeliveryMap: React.FC<DeliveryMapProps> = ({
                   <span>Endereços & Clientes Cadastrados</span>
                 </h3>
                 <p className="text-xs text-stone-500 mt-0.5">
-                  Selecione quem vai receber a entrega ou cadastre um novo cliente (como o Tio Rodolfo).
+                  {activeOrder ? 'O destinatário deste pedido está fixo. Para explorar os endereços, use “Consultar outros endereços”.' : 'Selecione um endereço para consultar ou cadastre um novo cliente.'}
                 </p>
+                <p className="mt-2 text-xs text-stone-600">Endereços personalizados ficam somente neste navegador. Eles não aparecem em outro aparelho ou navegador e podem ser perdidos ao limpar os dados do site. Posições e distâncias são aproximadas.</p>
               </div>
 
               <button
@@ -619,7 +612,7 @@ export const DeliveryMap: React.FC<DeliveryMapProps> = ({
               )}
             </div>
             <p className="text-xs text-stone-500 mb-3.5">
-              Selecione o vaso ou planta do estoque da sua loja que sairá para entrega.
+              {activeOrder ? `${activeOrder.quantity} unidade(s) de ${activeOrder.plantName}, conforme o pedido. A planta e o valor estão fixos.` : 'Consulte as plantas do estoque. Para registrar uma venda, selecione um pedido em Pedidos.'}
             </p>
 
             {plants.length === 0 ? (
@@ -629,7 +622,7 @@ export const DeliveryMap: React.FC<DeliveryMapProps> = ({
                   Nenhuma planta no catálogo ainda
                 </p>
                 <p className="text-xs text-stone-500 mt-1 mb-3">
-                  Cadastre uma planta primeiro para poder despachá-la na entrega.
+                  Cadastre uma planta primeiro para poder fazer uma entrega.
                 </p>
                 <button
                   type="button"
@@ -650,8 +643,10 @@ export const DeliveryMap: React.FC<DeliveryMapProps> = ({
                     <button
                       key={plant.id}
                       type="button"
+                      disabled={Boolean(activeOrder)}
                       onClick={() => {
                         sounds.playPlim();
+                        setCompletedDelivery(null);
                         setSelectedPlantId(plant.id);
                       }}
                       className={`p-2.5 rounded-2xl text-left border transition-all cursor-pointer flex flex-col items-start relative ${
@@ -696,7 +691,7 @@ export const DeliveryMap: React.FC<DeliveryMapProps> = ({
 
         {/* Right Column: Order Dispatch Slip / Summary */}
         <div className="lg:col-span-5">
-          <div className="bg-white rounded-3xl p-5 sm:p-6 border border-stone-200 shadow-sm sticky top-24 space-y-5">
+          <div id="map-delivery-summary" className="bg-white rounded-3xl p-5 sm:p-6 border border-stone-200 shadow-sm sticky top-24 space-y-5">
             <div className="border-b border-stone-100 pb-3">
               <span className="text-xs font-bold uppercase tracking-wider text-emerald-800">
                 Resumo da Ordem de Entrega
@@ -706,7 +701,7 @@ export const DeliveryMap: React.FC<DeliveryMapProps> = ({
               </h3>
             </div>
 
-            {selectedPlant && selectedDestination ? (
+            {selectedPlant && (activeOrder || completedDelivery || selectedDestination) ? (
               <div className="space-y-4">
                 {/* Product in order */}
                 <div className="flex items-center gap-3.5 p-3 rounded-2xl bg-stone-50 border border-stone-200">
@@ -720,11 +715,11 @@ export const DeliveryMap: React.FC<DeliveryMapProps> = ({
                       Produto Selecionado
                     </span>
                     <h4 className="font-display font-bold text-sm text-stone-900 truncate">
-                      {selectedPlant.name}
+                      {activeOrder?.plantName ?? completedDelivery?.plantName ?? selectedPlant.name}
                     </h4>
                     <div className="flex items-center justify-between mt-0.5">
                       <p className="text-sm font-bold text-emerald-800">
-                        {formatPrice(selectedPlant.price)}
+                        {formatPrice(activeOrder?.totalPrice ?? completedDelivery?.plantPrice ?? selectedPlant.price)}
                       </p>
                       <span
                         className={`text-[11px] font-bold px-2 py-0.5 rounded-full border ${
@@ -762,8 +757,8 @@ export const DeliveryMap: React.FC<DeliveryMapProps> = ({
                   <div className="flex justify-between py-1.5 border-b border-stone-100">
                     <span className="text-stone-500">Destinatário:</span>
                     <span className="font-bold text-stone-900 text-right flex items-center gap-1">
-                      {selectedDestination.name}
-                      {selectedDestination.isCustom && (
+                      {activeOrder?.customerName ?? completedDelivery?.destinationName ?? selectedDestination?.name}
+                      {!activeOrder && selectedDestination?.isCustom && (
                         <span className="text-[10px] text-blue-700 bg-blue-50 px-1 rounded">Cliente</span>
                       )}
                     </span>
@@ -771,10 +766,10 @@ export const DeliveryMap: React.FC<DeliveryMapProps> = ({
                   <div className="flex justify-between py-1.5 border-b border-stone-100">
                     <span className="text-stone-500">Endereço:</span>
                     <span className="font-medium text-stone-700 text-right max-w-[200px] truncate">
-                      {selectedDestination.address}
+                      {activeOrder?.customerAddress || completedDelivery?.destinationAddress || selectedDestination?.address || 'Casa no bairro da Aventura'}
                     </span>
                   </div>
-                  {selectedDestination.notes && (
+                  {!activeOrder && selectedDestination?.notes && (
                     <div className="flex justify-between py-1.5 border-b border-stone-100">
                       <span className="text-stone-500">Observações:</span>
                       <span className="text-stone-600 italic text-right max-w-[200px] truncate">
@@ -782,29 +777,30 @@ export const DeliveryMap: React.FC<DeliveryMapProps> = ({
                       </span>
                     </div>
                   )}
-                  <div className="flex justify-between py-1.5 border-b border-stone-100">
+                  {selectedDestination && <div className="flex justify-between py-1.5 border-b border-stone-100">
                     <span className="text-stone-500">Distância estimada:</span>
                     <span className="font-semibold text-stone-800">{selectedDestination.distanceKm} km</span>
-                  </div>
-                  <div className="flex justify-between py-1.5 border-b border-stone-100">
+                  </div>}
+                  {selectedDestination && <div className="flex justify-between py-1.5 border-b border-stone-100">
                     <span className="text-stone-500">Tempo de trânsito:</span>
                     <span className="font-semibold text-stone-800">
                       ~{Math.round(selectedDestination.distanceKm * 5)} minutos
                     </span>
-                  </div>
+                  </div>}
                   <div className="flex justify-between py-2 pt-3 font-bold text-sm text-stone-900">
                     <span>Valor do Pedido:</span>
                     <span className="text-emerald-800 font-extrabold text-base">
-                      {formatPrice(selectedPlant.price)}
+                      {formatPrice(activeOrder?.totalPrice ?? completedDelivery?.plantPrice ?? selectedPlant.price)}
                     </span>
                   </div>
                 </div>
 
+                {deliveryError && <p role="alert" className="mb-3 text-sm text-rose-700">{deliveryError}</p>}
                 {/* Dispatch Button */}
                 <button
                   id="btn-confirm-delivery"
                   type="button"
-                  disabled={isDelivering || !activeOrder || (selectedPlant.stock ?? 0) <= 0}
+                  disabled={isDelivering || !activeOrder || (selectedPlant.stock ?? 0) < (activeOrder?.quantity ?? 1)}
                   onClick={handleConfirmDelivery}
                   className="w-full py-3.5 px-4 rounded-2xl bg-emerald-700 hover:bg-emerald-800 active:bg-emerald-900 text-white font-display font-bold text-base shadow-md shadow-emerald-800/20 transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
                 >
@@ -812,8 +808,8 @@ export const DeliveryMap: React.FC<DeliveryMapProps> = ({
                   <span>
                     {!activeOrder
                       ? 'Escolha um pedido para entregar'
-                      : (selectedPlant.stock ?? 0) <= 0
-                      ? 'Sem Estoque para Envio'
+                      : (selectedPlant.stock ?? 0) < activeOrder.quantity
+                      ? 'Estoque insuficiente para o pedido'
                       : isDelivering
                       ? 'Despachando Entrega...'
                       : 'Confirmar e Realizar Entrega'}
@@ -877,7 +873,7 @@ export const DeliveryMap: React.FC<DeliveryMapProps> = ({
                 Histórico de Entregas Realizadas
               </h3>
               <p className="text-xs text-stone-500">
-                Registro oficial dos pedidos despachados pelo Novo Hiper
+                Pedidos entregues pelo Novo Hiper
               </p>
             </div>
             <span className="px-3 py-1 rounded-full bg-emerald-100 text-emerald-800 text-xs font-bold">

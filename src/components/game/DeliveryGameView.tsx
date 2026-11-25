@@ -40,7 +40,7 @@ interface DeliveryGameViewProps {
   destinations: DeliveryDestination[];
   cashRegister: CashRegister;
   initialOrder?: CustomerOrder | null;
-  onDeliverOrder: (orderId: string, plantId: string, value: number, customerName: string, destinationName: string) => void;
+  onDeliverOrder: (orderId: string, plantId: string, value: number, customerName: string, destinationName: string) => Promise<void>;
   onCreateSimulationOrder: () => void;
   onGoToCatalog: () => void;
   onGoToOrders: () => void;
@@ -63,6 +63,8 @@ export const DeliveryGameView: React.FC<DeliveryGameViewProps> = ({
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [dimensions, setDimensions] = useState({ width: 800, height: 600 });
   const [isSelectModalOpen, setIsSelectModalOpen] = useState(false);
+  const [deliveryError, setDeliveryError] = useState<string | null>(null);
+  const deliveryPending = useRef(false);
   const [isSuccessModalOpen, setIsSuccessModalOpen] = useState(false);
   const [isUpgradesModalOpen, setIsUpgradesModalOpen] = useState(false);
   const [completedMissionData, setCompletedMissionData] = useState<DeliveryMission | null>(null);
@@ -101,20 +103,20 @@ export const DeliveryGameView: React.FC<DeliveryGameViewProps> = ({
     getCompass,
   } = useGameEngine({
     initialMission: selectedMission,
-    onMissionCompleted: (completed) => {
-      // 1. Executar entrega no sistema existente (atualiza pedidos, estoque e caixa)
-      onDeliverOrder(
-        completed.orderId,
-        completed.plant.id,
-        completed.plant.price,
-        completed.customer.name,
-        completed.destination.name
-      );
-
-      // 2. Apresentar tela de celebração e pagamento
-      setCompletedMissionData(completed);
-      setIsSuccessModalOpen(true);
-      clearActiveMission();
+    onMissionCompleted: async (completed) => {
+      if (deliveryPending.current) return;
+      deliveryPending.current = true;
+      setDeliveryError(null);
+      try {
+        await onDeliverOrder(completed.orderId, completed.plant.id, completed.rewardValue, completed.customer.name, completed.destination.name);
+        setCompletedMissionData(completed);
+        setIsSuccessModalOpen(true);
+        clearActiveMission();
+      } catch (error) {
+        setDeliveryError('Não foi possível confirmar a entrega. Confira sua conexão e tente novamente junto ao cliente.');
+        setMission({ ...completed, state: 'PRONTO_PARA_ENTREGA', completedAt: undefined });
+        throw error;
+      } finally { deliveryPending.current = false; }
     },
   });
 
@@ -187,6 +189,7 @@ export const DeliveryGameView: React.FC<DeliveryGameViewProps> = ({
 
   return (
     <div className="relative w-full h-[82vh] sm:h-[85vh] max-h-[920px] rounded-3xl overflow-hidden border border-stone-800 bg-stone-950 shadow-2xl flex flex-col select-none">
+      {deliveryError && <p role="alert" className="bg-amber-50 p-3 text-amber-900">{deliveryError}</p>}
       {/* 1. Barra Superior do Jogo (HUD) */}
       <div className="relative z-20 px-3 sm:px-5 py-2.5 sm:py-3 bg-stone-900/95 backdrop-blur-md border-b border-stone-800 text-white flex items-center justify-between gap-2 sm:gap-4">
         {/* Lado Esquerdo: Voltar & Título */}

@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "./fonts.css";
 
 @layer base {
   body {
@@ -40,3 +41,128 @@
 .leaflet-bottom {
   z-index: 12 !important;
 }
+
+/* O teclado reduz o espaço visível: os formulários rolam dentro desse espaço. */
+[id$="-modal"], #plant-form-container, #plant-detail-container, #cash-register-modal-container {
+  max-height: min(90dvh, calc(var(--modal-viewport-height, 100dvh) - 32px));
+}
+@media (pointer: coarse) {
+  button, input, select { min-height: 44px; }
+  button[aria-label], button[title] { min-width: 44px; }
+  input, textarea, select { font-size: 16px !important; }
+  [class*="text-[10px]"], [class*="text-[11px]"] { font-size: 12px; }
+  .text-stone-400 { color: #57534e; }
+  #adventure-root .text-stone-400 { color: #d6d3d1; }
+  #shop-panel li { flex-wrap: wrap; }
+  #shop-panel li > div:last-child { margin-left: auto; }
+}
+
+/* A faixa inferior fica livre para avisos do navegador e gestos do sistema.
+   O aviso nativo de fullscreen não pertence ao DOM e não aceita z-index. */
+.adventure-touch-controls {
+  padding-left: max(12px, env(safe-area-inset-left, 0px));
+  padding-right: max(12px, env(safe-area-inset-right, 0px));
+  padding-bottom: max(12px, env(safe-area-inset-bottom, 0px));
+}
+.adventure-fullscreen .adventure-touch-controls {
+  bottom: 72px;
+}
+@media (max-height: 500px) and (orientation: landscape) {
+  .adventure-fullscreen #story-guidance {
+    max-height: 64px;
+    flex-shrink: 0;
+    overflow-y: auto;
+  }
+  .adventure-fullscreen .adventure-touch-controls {
+    bottom: 60px;
+  }
+}
+
+@media (orientation: landscape) {
+  #platform-rotate-hint { display: none; }
+}
+@media (max-height: 500px) and (orientation: landscape) {
+  #adventure-root[data-mode="platform"] .adventure-header p,
+  #adventure-root[data-mode="platform"] .adventure-header .rounded-full { display: none; }
+  #adventure-root[data-mode="platform"] .adventure-header { padding-top: 4px; padding-bottom: 4px; }
+}
+
+/* Celular deitado: o jogo usa a tela disponível mesmo sem fullscreen nativo. */
+#adventure-root[data-compact="true"] {
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+  width: 100%;
+  height: 100dvh;
+  max-height: none;
+  border: 0;
+  border-radius: 0;
+}
+#adventure-root[data-compact="true"] .adventure-header {
+  height: 48px;
+  padding: 2px max(12px, env(safe-area-inset-right, 0px)) 2px max(12px, env(safe-area-inset-left, 0px));
+}
+#adventure-root[data-compact="true"] .adventure-header p,
+#adventure-root[data-compact="true"] .adventure-header .rounded-full { display: none; }
+#adventure-root[data-compact="true"] #story-guidance {
+  max-height: none;
+  padding: 0 max(12px, env(safe-area-inset-right, 0px)) 0 max(12px, env(safe-area-inset-left, 0px));
+  overflow: visible;
+}
+#adventure-root[data-compact="true"] .mission-summary { height: 48px; }
+#adventure-root[data-compact="true"] .mission-summary > div { flex-direction: row; }
+#adventure-root[data-compact="true"] .mission-summary > div button { max-width: 220px; }
+#adventure-root[data-compact="true"] .mission-details {
+  position: absolute;
+  top: 100%;
+  left: max(12px, env(safe-area-inset-left, 0px));
+  right: max(12px, env(safe-area-inset-right, 0px));
+  max-height: calc(100dvh - 112px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 12px;
+  border: 1px solid #047857;
+  border-radius: 0 0 16px 16px;
+  background: #022c22;
+  box-shadow: 0 12px 24px #0008;
+}
+#adventure-root[data-compact="true"] #platform-tools {
+  height: 48px;
+  flex-wrap: nowrap;
+  padding: 0 max(12px, env(safe-area-inset-right, 0px)) 0 max(12px, env(safe-area-inset-left, 0px));
+}
+#adventure-root[data-compact="true"] .adventure-touch-controls {
+  padding: 8px max(20px, env(safe-area-inset-right, 0px)) max(12px, env(safe-area-inset-bottom, 0px)) max(20px, env(safe-area-inset-left, 0px));
+}
+#adventure-root[data-compact="true"] .adventure-dpad {
+  width: 132px;
+  height: 132px;
+  gap: 0;
+}
+#adventure-root[data-compact="true"] .adventure-dpad button { width: 44px; height: 44px; }
+#adventure-root[data-compact="true"] .adventure-action { width: 56px; height: 56px; }
+@media (orientation: landscape) and (max-height: 500px) and (pointer: coarse) {
+  .shop-header-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 4px 8px;
+    padding: 4px max(12px, env(safe-area-inset-right, 0px)) 4px max(12px, env(safe-area-inset-left, 0px));
+  }
+  .shop-logo { display: none; }
+  .shop-branding, .shop-actions { grid-column: 2; grid-row: 1; }
+  .shop-navigation { grid-column: 1; grid-row: 1; min-width: 0; max-width: 100%; }
+  .shop-navigation button { flex: none; padding: 8px 10px; }
+  .shop-actions { gap: 4px; }
+  .shop-actions > button { padding: 6px 8px; }
+  #btn-open-cash-desktop > div:first-child,
+  #btn-open-cash-desktop > div:last-child > span:first-child,
+  #btn-header-add-plant > span { display: none; }
+}
+@media (orientation: landscape) and (max-height: 500px) and (pointer: coarse) and (min-width: 640px) {
+  .shop-branding { display: none; }
+}
+#adventure-dpad[data-directions]:not([data-directions=""]) button { background-color: #1c1917b3; }
+#adventure-dpad[data-directions~="up"] button[aria-label="Andar para cima"],
+#adventure-dpad[data-directions~="down"] button[aria-label="Andar para baixo"],
+#adventure-dpad[data-directions~="left"] button[aria-label="Andar para a esquerda"],
+#adventure-dpad[data-directions~="right"] button[aria-label="Andar para a direita"] { background-color: #047857; }

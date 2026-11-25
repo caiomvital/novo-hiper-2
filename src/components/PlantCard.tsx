@@ -2,6 +2,7 @@ import React from 'react';
 import { Plant } from '../types';
 import { formatPrice } from '../services/storage';
 import { sounds } from '../services/sound';
+import { PlantPhoto } from './PlantPhoto';
 import { Eye, Edit3, Tag, Truck } from 'lucide-react';
 
 interface PlantCardProps {
@@ -47,7 +48,7 @@ export const PlantCard: React.FC<PlantCardProps> = ({ plant, onSelect, onEdit, o
 
       {/* Image Container with Natural Framing */}
       <div className="relative w-full aspect-4/3 sm:aspect-square rounded-2xl overflow-hidden bg-stone-100 border border-stone-100 mb-3 flex items-center justify-center">
-        <img
+        <PlantPhoto
           src={plant.photoUrl}
           alt={plant.name}
           className="w-full h-full object-cover group-hover:scale-103 transition-transform duration-300"

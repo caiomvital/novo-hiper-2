@@ -1,7 +1,9 @@
+import { useModalFocus } from '../hooks/useModalFocus';
 import React from 'react';
 import { CashRegister, Plant } from '../types';
 import { formatPrice } from '../services/storage';
 import { sounds } from '../services/sound';
+import { PlantPhoto } from './PlantPhoto';
 import { 
   X, 
   Coins, 
@@ -29,6 +31,7 @@ export const CashRegisterModal: React.FC<CashRegisterModalProps> = ({
   cashRegister,
   plants
 }) => {
+  useModalFocus(isOpen, 'cash-register-modal-container', 'Caixa virtual', onClose);
   if (!isOpen) return null;
 
   const totalUnitsInStock = plants.reduce((sum, p) => sum + (p.stock || 0), 0);
@@ -172,7 +175,7 @@ export const CashRegisterModal: React.FC<CashRegisterModalProps> = ({
                   Nenhuma venda registrada ainda
                 </h4>
                 <p className="text-xs text-stone-500 mt-1 max-w-sm mx-auto leading-relaxed">
-                  Quando você atender a um pedido e concluir a entrega no mapa de Olinda, o valor da planta entrará automaticamente para este caixa!
+                  Pegue a planta na Novo Hiper e entregue na casa do cliente na Aventura. O valor da venda entrará aqui. É dinheiro de brincadeira, sem cobrança real.
                 </p>
               </div>
             ) : (
@@ -193,11 +196,10 @@ export const CashRegisterModal: React.FC<CashRegisterModalProps> = ({
                       {/* Left: Plant Image + Info */}
                       <div className="flex items-center gap-3 min-w-0">
                         {sale.plantPhotoUrl ? (
-                          <img
+                          <PlantPhoto
                             src={sale.plantPhotoUrl}
                             alt={sale.plantName}
-                            className="w-12 h-12 rounded-xl object-cover border border-stone-200 flex-shrink-0"
-                            referrerPolicy="no-referrer"
+                            className="w-12 h-12 rounded-xl object-cover border border-stone-200 flex-shrink-0 [&>span]:hidden"
                           />
                         ) : (
                           <div className="w-12 h-12 rounded-xl bg-emerald-100 text-emerald-800 flex items-center justify-center flex-shrink-0">
@@ -220,6 +222,7 @@ export const CashRegisterModal: React.FC<CashRegisterModalProps> = ({
                               {formattedTime}
                             </span>
                           </div>
+                          <p className="text-xs text-stone-500 mt-1 truncate">Destino: {sale.destinationName}</p>
                         </div>
                       </div>
 

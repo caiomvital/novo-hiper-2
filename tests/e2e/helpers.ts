@@ -140,13 +140,15 @@ export async function walkRightUntilFall(page: Page, timeoutMs = 20_000) {
  * sem GPU é maior que a janela de tempo do salto.
  */
 export async function runToGoal(page: Page, timeoutMs = 40_000) {
-  const gapStarts = getGaps().map((g) => g.start);
+  const gapStarts = ((await state(page)).platform?.gaps ?? getGaps()).map((g) => g.start);
   const result = await page.evaluate(
     ([starts, timeout]) =>
       new Promise<'goal' | 'timeout'>((resolve) => {
         const fire = (type: 'keydown' | 'keyup', code: string) =>
           window.dispatchEvent(new KeyboardEvent(type, { code, bubbles: true, cancelable: true }));
         const jumped = new Set<number>();
+        let cartJumpAt = -10000;
+        let lastFalls = -1, lastHits = -1;
         const t0 = performance.now();
         fire('keydown', 'ArrowRight');
         const finish = (r: 'goal' | 'timeout') => {
@@ -157,9 +159,18 @@ export async function runToGoal(page: Page, timeoutMs = 40_000) {
           const s = window.__NH_ADVENTURE__!.getState();
           if (s.goalReached) return finish('goal');
           if (performance.now() - t0 > timeout) return finish('timeout');
+          if (s.fallRespawns !== lastFalls || (s.platform?.obstacleHits ?? 0) !== lastHits) {
+            jumped.clear(); lastFalls = s.fallRespawns; lastHits = s.platform?.obstacleHits ?? 0;
+          }
           if (s.player) {
+            const cart = s.platform?.cart;
+            if (s.platform?.grounded && cart && cart.x - s.player.x > 35 && cart.x - s.player.x < 85 && performance.now() - cartJumpAt > 800) {
+              cartJumpAt = performance.now();
+              fire('keydown', 'Space');
+              setTimeout(() => fire('keyup', 'Space'), 150);
+            }
             starts.forEach((start, i) => {
-              if (!jumped.has(i) && s.player!.x >= start - 8 && s.player!.x < start + 14) {
+              if (s.platform?.grounded && !jumped.has(i) && s.player!.x >= start - 22 && s.player!.x < start + 14) {
                 jumped.add(i);
                 fire('keydown', 'Space');
                 setTimeout(() => fire('keyup', 'Space'), 150);
@@ -172,6 +183,7 @@ export async function runToGoal(page: Page, timeoutMs = 40_000) {
       }),
     [gapStarts, timeoutMs] as const
   );
+  if (result === 'timeout') { const s = await state(page); console.error('piloto: limite de tempo', JSON.stringify({ player: s.player, falls: s.fallRespawns, seed: s.platform?.seed, hits: s.platform?.obstacleHits, space: s.platform?.space })); }
   expect(result, 'alcançou o destino').toBe('goal');
 }
 

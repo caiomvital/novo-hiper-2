@@ -13,25 +13,29 @@ import {
   formatPrice,
   getStoredCashRegister,
   saveStoredCashRegister,
-  recordSale
 } from './services/storage';
 import { sounds } from './services/sound';
+import { ShopJourney } from './components/ShopJourney';
 import { Header } from './components/Header';
 import { PlantCard } from './components/PlantCard';
 import { EmptyState } from './components/EmptyState';
 import { PlantFormModal } from './components/PlantFormModal';
 import { PlantDetailModal } from './components/PlantDetailModal';
 import { DeleteConfirmModal } from './components/DeleteConfirmModal';
-import { DeliveryMap } from './components/DeliveryMap';
 import { OrdersView } from './components/OrdersView';
 import { CashRegisterModal } from './components/CashRegisterModal';
 import { LoginScreen } from './components/LoginScreen';
+import { BookPromo } from './components/BookPromo';
 import { OfflineBanner } from './components/OfflineBanner';
 import { BackendStatusBanner } from './components/BackendStatusBanner';
-import { DeliveryGameView } from './components/game/DeliveryGameView';
 import { checkSession, clearLegacyAuthFlag, logout as performLogout, UNAUTHORIZED_EVENT } from './services/auth';
 import { api } from './services/api';
+import { useBusinessSync, BusinessSnapshot } from './hooks/useBusinessSync';
 import { runAutomaticLocalStorageMigration, MigrationResult } from './services/migration';
+
+// Telas secundárias não entram no download inicial do login e catálogo.
+const DeliveryMap = lazy(() => import('./components/DeliveryMap').then(module => ({ default: module.DeliveryMap })));
+const DeliveryGameView = lazy(() => import('./components/game/DeliveryGameView').then(module => ({ default: module.DeliveryGameView })));
 
 // Carregado sob demanda: o Phaser só é baixado quando a aba "Aventura (Beta)" é aberta
 const AdventureGameScreen = lazy(() =>
@@ -74,9 +78,17 @@ export default function App() {
   const [plantToDelete, setPlantToDelete] = useState<Plant | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [toastMessage, setToastMessage] = useState<string | null>(null);
-  const [isBackendConnected, setIsBackendConnected] = useState<boolean>(false);
+
   const [migrationResult, setMigrationResult] = useState<MigrationResult | null>(null);
   const [isMigrating, setIsMigrating] = useState<boolean>(false);
+  const logoutPending = useRef(false);
+  const [logoutError, setLogoutError] = useState<string | null>(null);
+
+  const applyBusinessSnapshot = useCallback((data: BusinessSnapshot) => {
+    setPlants(data.plants); setOrders(data.orders); setCashRegister(data.cash); setDeliveries(data.deliveries);
+    setActiveOrder((current) => current ? data.orders.find(o => o.id === current.id && o.status !== 'entregue') ?? null : null);
+  }, []);
+  const { connected: isBackendConnected, refresh: reloadBusinessData } = useBusinessSync(isAuthenticated, applyBusinessSnapshot);
 
   // Inicializar e conectar ao backend Node.js + SQLite com migração segura do localStorage
   useEffect(() => {
@@ -87,7 +99,7 @@ export default function App() {
       try {
         const isHealthy = await api.checkHealth();
         if (!isMounted) return;
-        setIsBackendConnected(isHealthy);
+
 
         if (isHealthy) {
           setIsMigrating(true);
@@ -99,30 +111,10 @@ export default function App() {
           // Evento: app aberto → pede ao backend uma verificação de novo pedido (ele decide; capacidade 1)
           await api.ensureOrder().catch(() => null);
 
-          // Carregar dados oficiais do SQLite
-          try {
-            const dbPlants = await api.getPlants();
-            if (isMounted && dbPlants.length > 0) {
-              setPlants(dbPlants);
-            }
-            const dbOrders = await api.getOrders();
-            if (isMounted && dbOrders.length > 0) {
-              setOrders(dbOrders);
-            }
-            const dbCash = await api.getCashRegister();
-            if (isMounted && dbCash) {
-              setCashRegister(dbCash);
-            }
-            const dbDeliveries = await api.getDeliveries();
-            if (isMounted && dbDeliveries.length > 0) {
-              setDeliveries(dbDeliveries);
-            }
-          } catch (fetchErr) {
-            console.warn('[Sync Backend]: Dados mantidos via localStorage de backup:', fetchErr);
-          }
+          await reloadBusinessData();
         }
       } catch (err) {
-        if (isMounted) setIsBackendConnected(false);
+        // A sincronização sinaliza indisponibilidade e retenta ao reconectar.
       }
     }
 
@@ -131,23 +123,7 @@ export default function App() {
     return () => {
       isMounted = false;
     };
-  }, [authStatus]);
-
-  // Recarrega do backend (fonte de verdade) o que uma entrega feita na Aventura altera: pedidos, estoque, caixa e entregas
-  const reloadBusinessData = useCallback(async () => {
-    try {
-      const dbPlants = await api.getPlants();
-      if (dbPlants.length > 0) setPlants(dbPlants);
-      const dbOrders = await api.getOrders();
-      if (dbOrders.length > 0) setOrders(dbOrders);
-      const dbCash = await api.getCashRegister();
-      if (dbCash) setCashRegister(dbCash);
-      const dbDeliveries = await api.getDeliveries();
-      if (dbDeliveries.length > 0) setDeliveries(dbDeliveries);
-    } catch (err) {
-      console.warn('[Sync Backend]: Não foi possível recarregar os dados após a entrega:', err);
-    }
-  }, []);
+  }, [authStatus, reloadBusinessData]);
 
   const handleManualMigration = async () => {
     setIsMigrating(true);
@@ -156,14 +132,7 @@ export default function App() {
     setIsMigrating(false);
     if (res.migrated) {
       showToast('Dados do localStorage sincronizados no banco SQLite da VPS!');
-      try {
-        const dbPlants = await api.getPlants();
-        if (dbPlants.length > 0) setPlants(dbPlants);
-        const dbOrders = await api.getOrders();
-        if (dbOrders.length > 0) setOrders(dbOrders);
-        const dbCash = await api.getCashRegister();
-        setCashRegister(dbCash);
-      } catch {}
+      await reloadBusinessData();
     } else {
       showToast(res.message);
     }
@@ -196,10 +165,6 @@ export default function App() {
   }, [deliveries]);
 
   useEffect(() => {
-    saveStoredDestinations(destinations);
-  }, [destinations]);
-
-  useEffect(() => {
     saveStoredOrders(orders);
   }, [orders]);
 
@@ -230,84 +195,43 @@ export default function App() {
   // Pedidos automáticos nascem NO BACKEND (POST /api/orders/ensure decide: capacidade, estoque, cliente, planta, preço e número).
   // Aqui o frontend só PEDE a verificação em eventos (abrir o app, salvar planta) e recarrega o que o servidor devolve.
 
-  const handleSavePlant = (
+  const handleSavePlant = async (
     plantData: Omit<Plant, 'id' | 'createdAt'> & { id?: string; createdAt?: number }
-  ) => {
-    if (plantData.id) {
-      sounds.playEditPlant();
-      const updatedPayload = {
-        name: plantData.name,
-        species: plantData.species,
-        price: plantData.price,
-        photoUrl: plantData.photoUrl,
-        careTag: plantData.careTag,
-        stock: plantData.stock !== undefined ? plantData.stock : 5,
-      };
-
-      setPlants((prev) =>
-        prev.map((p) =>
-          p.id === plantData.id
-            ? {
-                ...p,
-                ...updatedPayload,
-                isExample: false,
-              }
-            : p
-        )
-      );
-      showToast(`Planta "${plantData.name}" atualizada com sucesso.`);
-
-      if (isBackendConnected) {
-        api
-          .updatePlant(plantData.id, updatedPayload)
-          .then(() => reloadBusinessData()) // reposição de estoque pode ter feito o servidor criar um pedido
-          .catch((err) => {
-            console.warn('[Backend SQLite]: Erro ao atualizar planta:', err);
-          });
-      }
-    } else {
-      sounds.playSavePlant();
-      const plantId = 'planta_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7);
-      const newPlant: Plant = {
-        id: plantId,
-        name: plantData.name,
-        species: plantData.species,
-        price: plantData.price,
-        photoUrl: plantData.photoUrl,
-        createdAt: Date.now(),
-        careTag: plantData.careTag,
-        stock: plantData.stock !== undefined ? plantData.stock : 5,
-        isExample: false,
-      };
-      setPlants((prev) => [newPlant, ...prev]);
-      showToast(`Planta "${plantData.name}" cadastrada no catálogo do Novo Hiper.`);
-
-      if (isBackendConnected) {
-        api
-          .createPlant(newPlant)
-          .then(() => reloadBusinessData()) // a primeira planta faz o servidor criar o primeiro pedido
-          .catch((err) => {
-            console.warn('[Backend SQLite]: Erro ao cadastrar planta:', err);
-          });
-      }
-    }
+  ): Promise<void> => {
+    const payload = {
+      name: plantData.name, species: plantData.species, price: plantData.price,
+      photoUrl: plantData.photoUrl, careTag: plantData.careTag, stock: plantData.stock ?? 0,
+    };
+    const editing = plantData.createdAt !== undefined;
+    const saved = editing
+      ? await api.updatePlant(plantData.id!, payload)
+      : await api.createPlant({ ...payload, id: plantData.id });
+    setPlants((prev) => [saved, ...prev.filter((p) => p.id !== saved.id)]);
+    sounds.playSavePlant();
+    showToast(`Planta "${saved.name}" ${editing ? 'atualizada' : 'cadastrada'} com sucesso.`);
+    void reloadBusinessData();
   };
 
-  const handleDeleteConfirm = () => {
-    if (!plantToDelete) return;
-    const name = plantToDelete.name;
-    const plantId = plantToDelete.id;
-    setPlants((prev) => prev.filter((p) => p.id !== plantId));
-    if (selectedPlant?.id === plantId) {
-      setSelectedPlant(null);
-    }
-    setPlantToDelete(null);
-    showToast(`Planta "${name}" removida do estoque.`);
-
-    if (isBackendConnected) {
-      api.deletePlant(plantId).catch((err) => {
-        console.warn('[Backend SQLite]: Erro ao excluir planta:', err);
-      });
+  const deletePending = useRef(false);
+  const [isDeletingPlant, setIsDeletingPlant] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const handleDeleteConfirm = async () => {
+    if (!plantToDelete || deletePending.current) return;
+    deletePending.current = true;
+    setIsDeletingPlant(true);
+    setDeleteError(null);
+    const { id, name } = plantToDelete;
+    try {
+      await api.deletePlant(id);
+      setPlants((prev) => prev.filter((p) => p.id !== id));
+      if (selectedPlant?.id === id) setSelectedPlant(null);
+      setPlantToDelete(null);
+      showToast(`Planta "${name}" removida do catálogo.`);
+    } catch (err) {
+      setDeleteError(err instanceof Error ? err.message : 'Não foi possível remover a planta. Tente novamente.');
+    } finally {
+      deletePending.current = false;
+      setIsDeletingPlant(false);
     }
   };
 
@@ -328,85 +252,68 @@ export default function App() {
     showToast(`Amostra de "${nextPreset.name}" adicionada ao catálogo.`);
   };
 
-  const handleDeliveryComplete = (record: DeliveryRecord, linkedOrderId?: string) => {
-    // Crédito de venda SÓ nasce do fluxo de pedido/entrega. Entrega avulsa (sem pedido) não gera dinheiro nem baixa estoque.
-    if (!linkedOrderId) {
-      showToast('Para receber o pagamento, entregue um pedido de cliente (aba Pedidos).');
-      return;
-    }
-    // 1. Record delivery history
-    setDeliveries((prev) => [record, ...prev]);
-
-    // 2. Decrement stock for delivered plant (cannot drop below 0)
-    setPlants((prev) =>
-      prev.map((p) => {
-        if (p.id === record.plantId) {
-          const currentStock = p.stock ?? 1;
-          const nextStock = Math.max(0, currentStock - 1);
-          return { ...p, stock: nextStock };
-        }
-        return p;
-      })
-    );
-
-    // 3. Register sale in virtual cash register
-    const updatedRegister = recordSale(cashRegister, {
-      deliveryId: record.id,
-      plantId: record.plantId,
-      plantName: record.plantName,
-      plantPhotoUrl: record.plantPhotoUrl,
-      value: record.plantPrice,
-      orderId: linkedOrderId,
-      customerName: linkedOrderId ? record.destinationName : undefined,
-      destinationName: record.destinationName,
-    });
-    setCashRegister(updatedRegister);
-    sounds.playCashRegister();
-
-    // 4. Update order status if delivery was for a specific customer order
-    if (linkedOrderId) {
-      setOrders((prev) =>
-        prev.map((o) =>
-          o.id === linkedOrderId ? { ...o, status: 'entregue', completedAt: Date.now() } : o
-        )
-      );
-      showToast(`Pedido de ${record.destinationName} entregue! +${formatPrice(record.plantPrice)} no Caixa Virtual.`);
-    } else {
-      showToast(`Entrega de "${record.plantName}" concluída! +${formatPrice(record.plantPrice)} no Caixa Virtual.`);
-    }
-
-    // 5. Persistir entrega e transação no backend SQLite com validação
-    if (isBackendConnected) {
-      if (linkedOrderId) {
-        api.startDelivery(linkedOrderId)
-          .then((del) => {
-            if (del?.id) {
-              return api.finishDelivery(del.id);
-            }
-          })
-          .catch((err) => {
-            console.warn('[Backend SQLite]: Registro de entrega processado ou em andamento:', err);
-          });
+  const deliveryPending = useRef(false);
+  const handleDeliveryComplete = async (record: DeliveryRecord, linkedOrderId?: string): Promise<void> => {
+    if (!linkedOrderId) throw new Error('Escolha um pedido de cliente para entregar.');
+    if (deliveryPending.current) throw new Error('Aguarde a confirmação da entrega.');
+    deliveryPending.current = true;
+    try {
+      let total: number;
+      try {
+        const delivery = await api.startDelivery(linkedOrderId);
+        const result = await api.finishDelivery(delivery.id);
+        total = Number(result.order.total);
+      } catch (error) {
+        const confirmed = (await api.getOrders()).find(o => o.id === linkedOrderId && o.status === 'entregue');
+        if (!confirmed) throw error;
+        total = confirmed.totalPrice;
       }
+      await reloadBusinessData();
+      sounds.playCashRegister();
+      showToast(`Entrega confirmada! +${formatPrice(total)} no Caixa Virtual.`);
+    } finally { deliveryPending.current = false; }
+  };
+
+  const orderPendingRef = useRef(false);
+  const [pendingOrderId, setPendingOrderId] = useState<string | null>(null);
+  const [orderError, setOrderError] = useState<string | null>(null);
+  const handleUpdateOrderStatus = async (orderId: string, newStatus: OrderStatus) => {
+    if (orderPendingRef.current) return;
+    orderPendingRef.current = true;
+    setPendingOrderId(orderId);
+    setOrderError(null);
+    try {
+      await api.updateOrderStatus(orderId, newStatus);
+      const confirmed = await api.getOrders();
+      setOrders(confirmed);
+      if (newStatus === 'pronto') sounds.playBellRing();
+      else sounds.playPreparePlant();
+      showToast(newStatus === 'preparando' ? 'Planta em preparo!' : 'Pedido pronto para entrega.');
+    } catch (err) {
+      setOrderError(err instanceof Error && !(err instanceof TypeError) && !['TimeoutError', 'AbortError'].includes(err.name)
+        ? err.message : 'Não foi possível confirmar o preparo. Confira sua conexão e tente novamente.');
+    } finally {
+      orderPendingRef.current = false;
+      setPendingOrderId(null);
     }
   };
 
-  const handleUpdateOrderStatus = (orderId: string, newStatus: OrderStatus) => {
-    setOrders((prev) =>
-      prev.map((o) => (o.id === orderId ? { ...o, status: newStatus } : o))
-    );
-    if (newStatus === 'preparando') {
-      showToast('Planta em preparo: regada e pronta para embalagem!');
-    } else if (newStatus === 'pronto') {
-      showToast('Pedido preparado com carinho! Pronto para entrega.');
-    }
-
-    if (isBackendConnected) {
-      api.updateOrderStatus(orderId, newStatus).catch((err) => {
-        console.warn('[Backend SQLite]: Erro ao atualizar status do pedido:', err);
-      });
-    }
-  };
+  // O servidor decide quando nasce o próximo pedido; a leitura é compartilhada entre todas as telas.
+  useEffect(() => {
+    if (!isAuthenticated || activeTab !== 'pedidos') return;
+    let alive = true;
+    let polling = false;
+    const refresh = async () => {
+      if (!alive || document.hidden || polling || orderPendingRef.current) return;
+      polling = true;
+      try { await api.ensureOrder(); if (alive) await reloadBusinessData(); }
+      catch { /* próxima consulta ou reconexão retenta */ }
+      finally { polling = false; }
+    };
+    void refresh();
+    const timer = setInterval(() => void refresh(), 10000);
+    return () => { alive = false; clearInterval(timer); };
+  }, [isAuthenticated, activeTab, reloadBusinessData]);
 
   const handleDispatchToMap = (order: CustomerOrder) => {
     setActiveOrder(order);
@@ -414,7 +321,7 @@ export default function App() {
     showToast(`Pedido #${order.orderNumber} de ${order.customerName} despachado para o mapa!`);
   };
 
-  const handleGameDelivery = (
+  const handleGameDelivery = async (
     orderId: string, 
     plantId: string, 
     value: number, 
@@ -436,24 +343,22 @@ export default function App() {
       timestamp: Date.now(),
       status: 'entregue'
     };
-    handleDeliveryComplete(newDelivery, orderId);
-    showToast(`Entrega concluída! +${formatPrice(value)} adicionados ao caixa virtual.`);
+    await handleDeliveryComplete(newDelivery, orderId);
   };
 
   const handleSaveDestination = (newDest: DeliveryDestination) => {
-    setDestinations((prev) => {
-      const exists = prev.some((d) => d.id === newDest.id);
-      if (exists) {
-        return prev.map((d) => (d.id === newDest.id ? newDest : d));
-      }
-      return [newDest, ...prev];
-    });
-    showToast(`Endereço de "${newDest.name}" adicionado ao mapa com sucesso!`);
+    const exists = destinations.some((d) => d.id === newDest.id);
+    const updated = exists ? destinations.map((d) => d.id === newDest.id ? newDest : d) : [newDest, ...destinations];
+    if (!saveStoredDestinations(updated)) throw new Error('Não foi possível salvar o endereço neste navegador. Libere espaço ou permita o armazenamento e tente novamente.');
+    setDestinations(updated);
+    showToast(`Endereço de "${newDest.name}" salvo neste navegador.`);
   };
 
   const handleDeleteDestination = (id: string) => {
     const dest = destinations.find((d) => d.id === id);
-    setDestinations((prev) => prev.filter((d) => d.id !== id));
+    const updated = destinations.filter((d) => d.id !== id);
+    if (!saveStoredDestinations(updated)) throw new Error('Não foi possível remover o endereço neste navegador. Tente novamente.');
+    setDestinations(updated);
     if (dest) {
       showToast(`Endereço de "${dest.name}" removido do mapa.`);
     }
@@ -480,11 +385,25 @@ export default function App() {
   const totalStockValue = plants.reduce((sum, p) => sum + (p.price * (p.stock ?? 1)), 0);
   const pendingOrdersCount = orders.filter((o) => o.status !== 'entregue').length;
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    if (logoutPending.current) return;
+    logoutPending.current = true;
+    setLogoutError(null);
     sounds.playPlim();
-    void performLogout(); // invalida a sessão no servidor e limpa o cookie
-    setIsAuthenticated(false);
-    showToast('Você saiu da loja. Até logo, Bernardo!');
+    try {
+      await performLogout();
+      setIsCashModalOpen(false);
+      setIsFormOpen(false);
+      setSelectedPlant(null);
+      setPlantToDelete(null);
+      setActiveOrder(null);
+      setActiveTab('catalogo');
+      setIsAuthenticated(false);
+    } catch {
+      setLogoutError('Não foi possível sair da loja. Confira sua conexão e tente Sair novamente.');
+    } finally {
+      logoutPending.current = false;
+    }
   };
 
   // Ainda perguntando ao servidor se a sessão é válida (evita "piscar" a tela de login)
@@ -520,6 +439,7 @@ export default function App() {
 
       {/* Offline Status Indicator */}
       <OfflineBanner />
+      {logoutError && <p role="alert" className="bg-rose-50 text-rose-800 p-3 text-sm">{logoutError}</p>}
 
       {/* Backend SQLite Connection & Migration Status */}
       <BackendStatusBanner 
@@ -549,6 +469,7 @@ export default function App() {
 
       {/* Main Content Area */}
       <main className="max-w-5xl w-full mx-auto px-4 pt-4 sm:pt-6 flex-1">
+        {activeTab === 'catalogo' && <ShopJourney plants={plants} orders={orders} deliveries={deliveries} cash={cashRegister} connected={isBackendConnected} onAddPlant={handleOpenNewForm} onCatalog={() => document.getElementById('catalog-plants')?.scrollIntoView({ behavior: 'smooth' })} onAdventure={() => setActiveTab('aventura')} onCash={() => setIsCashModalOpen(true)} />}
         {/* Realistic Shop Dashboard Banner */}
         <section className="relative rounded-3xl bg-stone-900 text-white p-5 sm:p-7 shadow-sm border border-stone-800 overflow-hidden mb-6">
           <div 
@@ -562,11 +483,15 @@ export default function App() {
               Novo Hiper • Plantas e Jardinagem
             </span>
             <h2 className="text-2xl sm:text-3xl font-display font-extrabold tracking-tight leading-tight mb-2">
-              Painel do Dono da Loja
+              Sua loja, Bernardo!
             </h2>
             <p className="text-stone-300 text-xs sm:text-sm leading-relaxed mb-5">
-              Gerencie o estoque de plantas da sua loja, atenda pedidos de clientes reais de Olinda, prepare os vasinhos e realize entregas no mapa.
+              Cadastre suas plantas com foto, nome, preço e estoque. No jogo, Bernardo cuida dessa mesma loja e leva as encomendas aos moradores. As entregas confirmadas ficam registradas no seu painel.
             </p>
+            <div className="flex flex-wrap gap-2 mb-5">
+              <button id="btn-start-catalog" onClick={handleOpenNewForm} className="rounded-xl bg-emerald-700 px-4 py-2 text-sm font-bold">Cadastrar planta</button>
+              <button id="btn-start-adventure" onClick={() => setActiveTab('aventura')} className="rounded-xl bg-white/15 px-4 py-2 text-sm font-bold">Jogar Aventura</button>
+            </div>
 
             {/* Shopkeeper Status Badges */}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 sm:gap-3 max-w-2xl">
@@ -643,7 +568,7 @@ export default function App() {
 
         {/* Tab 1: Plant Catalog */}
         {activeTab === 'catalogo' && (
-          <div className="space-y-6">
+          <div id="catalog-plants" className="space-y-6">
             {plants.length > 0 && (
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div>
@@ -654,7 +579,7 @@ export default function App() {
                     </span>
                   </h3>
                   <p className="text-xs text-stone-500">
-                    Selecione qualquer planta para visualizar detalhes técnicos ou despachar no mapa.
+                    Escolha uma planta para ver a foto, o preço e a quantidade disponível.
                   </p>
                 </div>
 
@@ -727,6 +652,9 @@ export default function App() {
           <OrdersView
             orders={orders}
             plants={plants}
+            pendingOrderId={pendingOrderId}
+            error={orderError}
+            onStartGameDelivery={() => setActiveTab('aventura')}
             onUpdateOrderStatus={handleUpdateOrderStatus}
             onDispatchToMap={handleDispatchToMap}
             onGoToCatalog={() => setActiveTab('catalogo')}
@@ -735,6 +663,7 @@ export default function App() {
 
         {/* Tab 3: Realistic Delivery Map & Dispatch Desk */}
         {activeTab === 'entregas' && (
+          <Suspense fallback={<div role="status" className="p-8 text-center text-stone-500">Abrindo o mapa…</div>}>
           <DeliveryMap
             plants={plants}
             destinations={destinations}
@@ -746,10 +675,12 @@ export default function App() {
             activeOrder={activeOrder}
             onClearActiveOrder={() => setActiveOrder(null)}
           />
+          </Suspense>
         )}
 
         {/* Tab 4: 2D Delivery Mini-Game (Bernardo em Olinda) */}
         {activeTab === 'jogo' && (
+          <Suspense fallback={<div role="status" className="p-8 text-center text-stone-500">Abrindo as entregas…</div>}>
           <DeliveryGameView
             orders={orders}
             plants={plants}
@@ -762,6 +693,7 @@ export default function App() {
             onGoToOrders={() => setActiveTab('pedidos')}
             onUpdateCashRegister={(updated) => setCashRegister(updated)}
           />
+          </Suspense>
         )}
 
         {/* Tab 5: Vertical slice do jogo 2D com Phaser (mapa top-down + plataforma) — protótipo isolado, sem dados reais */}
@@ -773,10 +705,16 @@ export default function App() {
               </div>
             }
           >
-            <AdventureGameScreen onExit={() => setActiveTab('catalogo')} onDataChanged={reloadBusinessData} onNavigateTab={setActiveTab} />
+            <AdventureGameScreen plants={plants} onExit={() => setActiveTab('catalogo')} onDataChanged={reloadBusinessData} onNavigateTab={setActiveTab} />
           </Suspense>
         )}
       </main>
+
+      {activeTab !== 'aventura' && (
+        <div className="max-w-5xl mx-auto px-4 pb-24 sm:pb-10">
+          <BookPromo className="max-w-md mx-auto" />
+        </div>
+      )}
 
       {/* Floating Action Button on Mobile for Quick Add */}
       {activeTab === 'catalogo' && plants.length > 0 && (
@@ -794,6 +732,7 @@ export default function App() {
 
       {/* Modals */}
       <PlantFormModal
+        hasOpenOrder={Boolean(editingPlant && orders.some((o) => o.plantId === editingPlant.id && o.status !== 'entregue'))}
         initialPlant={editingPlant}
         isOpen={isFormOpen}
         onClose={() => {
@@ -808,14 +747,16 @@ export default function App() {
         isOpen={!!selectedPlant}
         onClose={() => setSelectedPlant(null)}
         onEdit={(plant) => handleOpenEditForm(plant)}
-        onDeleteRequest={(plant) => setPlantToDelete(plant)}
+        onDeleteRequest={(plant) => { setDeleteError(null); setPlantToDelete(plant); }}
         onSendToDelivery={(plant) => handleSendToDelivery(plant)}
       />
 
       <DeleteConfirmModal
         plant={plantToDelete}
         isOpen={!!plantToDelete}
-        onClose={() => setPlantToDelete(null)}
+        onClose={() => { if (!isDeletingPlant) setPlantToDelete(null); }}
+        busy={isDeletingPlant}
+        error={deleteError}
         onConfirm={handleDeleteConfirm}
       />
 
@@ -823,7 +764,7 @@ export default function App() {
         isOpen={isCashModalOpen}
         onClose={() => setIsCashModalOpen(false)}
         cashRegister={cashRegister}
-        onUpdateRegister={(updated) => setCashRegister(updated)}
+        plants={plants}
       />
     </div>
   );

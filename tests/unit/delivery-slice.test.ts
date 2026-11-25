@@ -42,7 +42,7 @@ describe('pedido ativo (status elegíveis EXPLÍCITOS)', () => {
   });
   it('toAdventureOrder leva só o necessário para a tela (sem endereço do cliente)', () => {
     const a = toAdventureOrder(order({ customerAddress: 'Rua Real, 142', totalPrice: 22.5, destinationId: 'bairro1/house_007' }));
-    expect(a).toEqual({ id: 'o1', orderNumber: 101, customerId: 'c', customerName: 'Ana', destinationId: 'bairro1/house_007', plantName: 'Samambaia', deliverable: true, total: 22.5, status: 'recebido' });
+    expect(a).toEqual({ id: 'o1', orderNumber: 101, customerId: 'c', customerName: 'Ana', destinationId: 'bairro1/house_007', plantName: 'Samambaia', plantPhotoUrl: '', quantity: 1, deliverable: true, total: 22.5, status: 'recebido' });
     expect(JSON.stringify(a)).not.toContain('Rua Real');
   });
 });

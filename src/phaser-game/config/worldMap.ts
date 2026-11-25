@@ -110,16 +110,20 @@ const HOUSE_H = 104;
 const EDGE = 14;
 
 let houseSeq = 0;
-/** Fileira de `n` casas igualmente espaçadas ao longo do topo ('n') ou da base ('s') de um retângulo. */
+/** Lotes estáveis com larguras e recuos variados; ids e lado das portas são preservados. */
 function houseRow(area: Rect, side: 'n' | 's', n: number): HouseData[] {
   const gap = (area.w - n * HOUSE_W) / (n + 1);
-  const y = side === 'n' ? area.y + EDGE : area.y + area.h - EDGE - HOUSE_H;
   const out: HouseData[] = [];
   for (let i = 0; i < n; i++) {
     const k = houseSeq++;
+    const width = [112, 126, 118, 108, 122][(k * 3) % 5];
+    const height = Math.round(HOUSE_H * width / HOUSE_W);
+    const setback = [4, 23, 12, 32, 0][(k + Math.floor(area.x / 100)) % 5];
+    const center = area.x + gap * (i + 1) + HOUSE_W * i + HOUSE_W / 2 + [-5, 6, 0][k % 3];
+    const y = side === 'n' ? area.y + EDGE + setback : area.y + area.h - EDGE - height - setback;
     out.push({
       id: `casa_${k}`,
-      rect: { x: Math.round(area.x + gap * (i + 1) + HOUSE_W * i), y, w: HOUSE_W, h: HOUSE_H },
+      rect: { x: Math.round(center - width / 2), y, w: width, h: height },
       wall: WALLS[k % WALLS.length],
       roof: ROOFS[(k * 5) % ROOFS.length],
       facing: side,
@@ -131,7 +135,8 @@ function houseRow(area: Rect, side: 'n' | 's', n: number): HouseData[] {
 const twoRows = (area: Rect, nTop: number, nBottom = nTop) => [...houseRow(area, 'n', nTop), ...houseRow(area, 's', nBottom)];
 
 // ── Peças especiais ───────────────────────────────────────────────────────────
-const SHOP_RECT: Rect = { x: 836, y: 700, w: 392, h: 300 };
+// Fachada panorâmica: preserva a porta em y=1000 e acompanha a proporção da arte.
+const SHOP_RECT: Rect = { x: 836, y: 820, w: 392, h: 180 };
 const PLAZA_RECT = block(2, 1);
 const FOUNTAIN = { x: 1768, y: 872, r: 44 };
 const PLAZA_TREES = [

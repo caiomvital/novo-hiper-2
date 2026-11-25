@@ -1,0 +1,88 @@
+{
+  "image": "moradores-v1.png",
+  "atlas": "moradores-v1-atlas.json",
+  "animation": "standing-only",
+  "suggestedScale": 0.36,
+  "residents": [
+    {
+      "id": "cust_dona_maria",
+      "name": "Dona Maria",
+      "frames": {
+        "down": "cust_dona_maria-down",
+        "left": "cust_dona_maria-left",
+        "right": "cust_dona_maria-right",
+        "up": "cust_dona_maria-up"
+      }
+    },
+    {
+      "id": "cust_seu_joao",
+      "name": "Seu João",
+      "frames": {
+        "down": "cust_seu_joao-down",
+        "left": "cust_seu_joao-left",
+        "right": "cust_seu_joao-right",
+        "up": "cust_seu_joao-up"
+      }
+    },
+    {
+      "id": "cust_ana",
+      "name": "Ana",
+      "frames": {
+        "down": "cust_ana-down",
+        "left": "cust_ana-left",
+        "right": "cust_ana-right",
+        "up": "cust_ana-up"
+      }
+    },
+    {
+      "id": "cust_carlos",
+      "name": "Carlos",
+      "frames": {
+        "down": "cust_carlos-down",
+        "left": "cust_carlos-left",
+        "right": "cust_carlos-right",
+        "up": "cust_carlos-up"
+      }
+    },
+    {
+      "id": "cust_dona_lucia",
+      "name": "Dona Lúcia",
+      "frames": {
+        "down": "cust_dona_lucia-down",
+        "left": "cust_dona_lucia-left",
+        "right": "cust_dona_lucia-right",
+        "up": "cust_dona_lucia-up"
+      }
+    },
+    {
+      "id": "cust_floricultura",
+      "name": "Representante da floricultura",
+      "frames": {
+        "down": "cust_floricultura-down",
+        "left": "cust_floricultura-left",
+        "right": "cust_floricultura-right",
+        "up": "cust_floricultura-up"
+      }
+    },
+    {
+      "id": "cust_seu_antonio",
+      "name": "Seu Antônio",
+      "frames": {
+        "down": "cust_seu_antonio-down",
+        "left": "cust_seu_antonio-left",
+        "right": "cust_seu_antonio-right",
+        "up": "cust_seu_antonio-up"
+      }
+    },
+    {
+      "id": "cust_bia",
+      "name": "Bia",
+      "frames": {
+        "down": "cust_bia-down",
+        "left": "cust_bia-left",
+        "right": "cust_bia-right",
+        "up": "cust_bia-up"
+      }
+    }
+  ]
+}

@@ -9,6 +9,21 @@ function key(type: 'keydown' | 'keyup', code: string) {
 describe('InputState (teclado + touch)', () => {
   afterEach(() => vi.restoreAllMocks());
 
+  it('perder foco ou ocultar a página cancela movimento e interações pendentes', () => {
+    const input = new InputState();
+    input.attachKeyboard();
+    key('keydown', 'ArrowRight');
+    input.setTouch('interact', true);
+    window.dispatchEvent(new Event('blur'));
+    expect(input.snapshot.right).toBe(false);
+    expect(input.consumePress('interact')).toBe(false);
+    key('keydown', 'KeyW');
+    vi.spyOn(document, 'hidden', 'get').mockReturnValue(true);
+    document.dispatchEvent(new Event('visibilitychange'));
+    expect(input.snapshot.up).toBe(false);
+    input.detachKeyboard();
+  });
+
   it('mapeia setas para as quatro direções e solta ao levantar a tecla', () => {
     const input = new InputState();
     input.attachKeyboard();

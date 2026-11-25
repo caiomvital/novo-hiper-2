@@ -35,7 +35,24 @@ async function startServer() {
   } else {
     const distPath = path.resolve(process.cwd(), 'dist');
     if (fs.existsSync(distPath)) {
-      app.use(express.static(distPath));
+      // Somente bundles públicos: usa a versão pré-comprimida sem trabalho de CPU por requisição.
+      app.use((req, res, next) => {
+        if ((req.method !== 'GET' && req.method !== 'HEAD') || !/^\/assets\/[^/]+\.(js|css)$/.test(req.path)) return next();
+        res.vary('Accept-Encoding');
+        const encoding = req.acceptsEncodings('br', 'gzip', 'identity');
+        if (encoding !== 'br' && encoding !== 'gzip') return next();
+        const file = path.join(distPath, req.path.slice(1)) + (encoding === 'br' ? '.br' : '.gz');
+        if (!fs.existsSync(file)) return next();
+        res.type(req.path.endsWith('.js') ? 'application/javascript' : 'text/css');
+        res.setHeader('Content-Encoding', encoding);
+        res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+        res.sendFile(file);
+      });
+      app.use(express.static(distPath, {
+        setHeaders(res, file) {
+          res.setHeader('Cache-Control', file.includes(path.sep + 'assets' + path.sep) ? 'public, max-age=31536000, immutable' : 'no-cache');
+        },
+      }));
       app.get('*', (_req, res) => {
         res.sendFile(path.join(distPath, 'index.html'));
       });

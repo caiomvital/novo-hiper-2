@@ -1,6 +1,8 @@
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import path from 'path';
+import fs from 'node:fs';
+import { brotliCompressSync, gzipSync, constants } from 'node:zlib';
 import { defineConfig } from 'vite';
 import { VitePWA } from 'vite-plugin-pwa';
 
@@ -8,9 +10,22 @@ export default defineConfig(() => {
   return {
     plugins: [
       react(),
+      {
+        name: 'precompress-static-assets',
+        apply: 'build',
+        closeBundle() {
+          const folder = path.resolve('dist/assets');
+          if (!fs.existsSync(folder)) return;
+          for (const name of fs.readdirSync(folder).filter(name => /\.(js|css)$/.test(name))) {
+            const file = path.join(folder, name), bytes = fs.readFileSync(file);
+            fs.writeFileSync(file + '.br', brotliCompressSync(bytes, { params: { [constants.BROTLI_PARAM_QUALITY]: 6 } }));
+            fs.writeFileSync(file + '.gz', gzipSync(bytes, { level: 9 }));
+          }
+        },
+      },
       tailwindcss(),
       VitePWA({
-        registerType: 'autoUpdate',
+        registerType: 'prompt',
         includeAssets: [
           'favicon.ico',
           'favicon.png',
@@ -30,7 +45,7 @@ export default defineConfig(() => {
           theme_color: '#065f46',
           background_color: '#fafaf9',
           display: 'standalone',
-          orientation: 'portrait-primary',
+          orientation: 'any',
           start_url: '/',
           scope: '/',
           categories: ['education', 'lifestyle', 'kids'],
@@ -56,7 +71,9 @@ export default defineConfig(() => {
           ]
         },
         workbox: {
-          globPatterns: ['**/*.{js,css,html,ico,png,svg,woff,woff2}'],
+          globPatterns: ['**/*.{js,css,json,html,ico,png,jpg,jpeg,webp,svg,woff,woff2}'],
+          globIgnores: ['**/assets/bernardo-sprites/**'],
+          maximumFileSizeToCacheInBytes: 8 * 1024 * 1024,
           navigateFallback: '/index.html',
           runtimeCaching: [
             {
@@ -124,7 +141,10 @@ export default defineConfig(() => {
       watch: process.env.DISABLE_HMR === 'true' ? null : {},
       // Somente dev: encaminha /api ao backend local isolado quando DEV_API_TARGET estiver definido.
       proxy: process.env.DEV_API_TARGET
-        ? { '/api': { target: process.env.DEV_API_TARGET, changeOrigin: false } }
+        ? {
+            '/api': { target: process.env.DEV_API_TARGET, changeOrigin: false },
+            '/uploads': { target: process.env.DEV_API_TARGET, changeOrigin: false },
+          }
         : undefined,
     },
   };

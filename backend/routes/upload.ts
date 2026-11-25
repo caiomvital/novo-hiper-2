@@ -20,8 +20,7 @@ const storage = multer.diskStorage({
     cb(null, plantsUploadDir);
   },
   filename: (_req, file, cb) => {
-    const ext = path.extname(file.originalname).toLowerCase();
-    const safeExt = ['.jpg', '.jpeg', '.png', '.webp'].includes(ext) ? ext : '.jpg';
+    const safeExt = ({ 'image/jpeg': '.jpg', 'image/png': '.png', 'image/webp': '.webp' } as Record<string, string>)[file.mimetype] || '.jpg';
     const randomName = `plant_${Date.now()}_${crypto.randomBytes(8).toString('hex')}${safeExt}`;
     cb(null, randomName);
   },
@@ -65,6 +64,19 @@ uploadRouter.post('/', (req: Request, res: Response): void => {
 
     if (!req.file) {
       res.status(400).json({ error: 'Nenhum arquivo de imagem foi enviado.' });
+      return;
+    }
+
+    const header = Buffer.alloc(12);
+    const fd = fs.openSync(req.file.path, 'r');
+    let size: number;
+    try { size = fs.readSync(fd, header, 0, 12, 0); } finally { fs.closeSync(fd); }
+    const matches = req.file.mimetype === 'image/jpeg' ? size >= 3 && header.subarray(0, 3).equals(Buffer.from([255, 216, 255]))
+      : req.file.mimetype === 'image/png' ? size >= 8 && header.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
+      : size >= 12 && header.toString('ascii', 0, 4) === 'RIFF' && header.toString('ascii', 8, 12) === 'WEBP';
+    if (!matches) {
+      fs.unlinkSync(req.file.path);
+      res.status(400).json({ error: 'O arquivo não contém uma foto JPG, PNG ou WEBP válida.' });
       return;
     }
 

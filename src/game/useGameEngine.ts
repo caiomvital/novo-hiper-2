@@ -18,6 +18,7 @@ import { moveWithCollisionSlide } from './collisionSystem';
 import { 
   getStoredActiveMission, 
   saveActiveMission, 
+  clearActiveMission,
   getStoredPlayerPosition, 
   savePlayerPosition 
 } from '../services/gameStorage';
@@ -25,7 +26,7 @@ import { sounds } from '../services/sound';
 
 export interface UseGameEngineProps {
   initialMission?: DeliveryMission | null;
-  onMissionCompleted: (mission: DeliveryMission) => void;
+  onMissionCompleted: (mission: DeliveryMission) => Promise<void>;
 }
 
 const PLAYER_BASE_SPEED = 3.6;
@@ -120,7 +121,7 @@ export function useGameEngine({ initialMission, onMissionCompleted }: UseGameEng
   }, []);
 
   // Disparo da Ação Interativa (Pegar Planta ou Entregar ao Cliente)
-  const executeInteraction = useCallback(() => {
+  const executeInteraction = useCallback(async () => {
     if (!interactionPrompt.canInteract || !interactionPrompt.action) return;
 
     if (interactionPrompt.action === 'pickup') {
@@ -158,6 +159,10 @@ export function useGameEngine({ initialMission, onMissionCompleted }: UseGameEng
       if (!mission || isDeliveringRef.current) return;
       isDeliveringRef.current = true;
 
+      const completedMission: DeliveryMission = { ...mission, state: 'ENTREGA_CONCLUIDA', completedAt: Date.now() };
+      try { await onMissionCompleted(completedMission); }
+      catch { isDeliveringRef.current = false; return; }
+
       // Efeito sonoro de entrega e celebração
       sounds.playBellRing();
 
@@ -179,17 +184,8 @@ export function useGameEngine({ initialMission, onMissionCompleted }: UseGameEng
 
       setPlayer((prev) => ({ ...prev, carryingPlant: false }));
 
-      const completedMission: DeliveryMission = {
-        ...mission,
-        state: 'ENTREGA_CONCLUIDA',
-        completedAt: Date.now(),
-      };
-
       setMission(completedMission);
-      saveActiveMission(completedMission);
-
-      // Notificar o orquestrador do Novo Hiper para decrementar estoque e creditar o caixa
-      onMissionCompleted(completedMission);
+      clearActiveMission();
 
       setTimeout(() => {
         isDeliveringRef.current = false;

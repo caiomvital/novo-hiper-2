@@ -58,6 +58,7 @@ export async function login(usernameInput: string, passwordInput: string): Promi
     const res = await fetch(`${API_BASE}/auth/login`, {
       method: 'POST',
       credentials: 'same-origin',
+      signal: AbortSignal.timeout(10000),
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ username, password }),
     });
@@ -73,9 +74,8 @@ export async function login(usernameInput: string, passwordInput: string): Promi
 
 /** Invalida a sessão NO SERVIDOR e limpa o cookie. Não apaga plantas, pedidos, estoque nem caixa. */
 export async function logout(): Promise<void> {
-  try {
-    await fetch(`${API_BASE}/auth/logout`, { method: 'POST', credentials: 'same-origin' });
-  } catch {
-    /* sem rede: o cookie expira sozinho; a UI volta ao login de qualquer forma */
-  }
+  const res = await fetch(`${API_BASE}/auth/logout`, {
+    method: 'POST', credentials: 'same-origin', signal: AbortSignal.timeout(10000),
+  });
+  if (!res.ok) throw new Error('Não foi possível encerrar a sessão.');
 }

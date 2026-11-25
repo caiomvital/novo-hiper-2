@@ -1,13 +1,13 @@
 import { WORLD } from './worldConfig';
 
 /**
- * Bernardo top-down (spritesheet derivado por scripts/sprites/build-topdown.py).
+ * Bernardo top-down (spritesheet normalizado por scripts/sprites/build-final-assets.cjs).
  * Layout: 5 colunas (0 = idle, 1..4 = caminhada) x 4 linhas (0 = baixo, 1 = esquerda, 2 = direita, 3 = cima),
  * frames de 72x80 com o pé ancorado em (36, 72). Exibido a 1:1 (sem escala em tempo de execução).
  */
 export const TOPDOWN_SPRITE = {
   textureKey: 'bernardo-topdown',
-  path: '/assets/bernardo-sprites/topdown/bernardo-topdown.png',
+  path: new URL('../../../final-assets/bernardo/blond-v2/bernardo-topdown.png', import.meta.url).href,
   frameWidth: 72,
   frameHeight: 80,
   columns: 5,

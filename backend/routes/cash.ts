@@ -41,12 +41,22 @@ cashRouter.get('/', async (_req: Request, res: Response) => {
         ct.created_at,
         o.order_number,
         c.name AS customer_name,
-        c.destination AS destination_name
+        c.address AS customer_address,
+        COALESCE(o.destination_id, c.destination) AS destination_name
       FROM cash_transactions ct
       LEFT JOIN orders o ON o.id = ct.order_id
       LEFT JOIN customers c ON c.id = o.customer_id
       ORDER BY ct.created_at DESC
     `);
+
+    const items = await db.all(`SELECT oi.order_id, oi.plant_id, oi.quantity, oi.unit_price,
+      p.name AS plant_name, p.image_path AS plant_photo_url
+      FROM order_items oi LEFT JOIN plants p ON p.id = oi.plant_id
+      WHERE oi.order_id IN (SELECT order_id FROM cash_transactions WHERE type = 'credit')
+      ORDER BY oi.id`);
+    for (const transaction of transactions) {
+      transaction.items = items.filter((item: any) => item.order_id === transaction.order_id);
+    }
 
     const summary = await db.get(`
       SELECT 

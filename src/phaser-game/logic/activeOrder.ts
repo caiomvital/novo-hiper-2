@@ -28,6 +28,8 @@ export function toAdventureOrder(o: CustomerOrder): AdventureOrder {
     customerName: o.customerName,
     destinationId: o.destinationId,
     plantName: o.plantName,
+    plantPhotoUrl: o.plantPhotoUrl,
+    quantity: o.quantity,
     deliverable: o.deliverable !== false,
     total: o.totalPrice,
     status: o.status,

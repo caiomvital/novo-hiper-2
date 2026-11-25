@@ -32,7 +32,7 @@ export const PWAInstallButton: React.FC<PWAInstallButtonProps> = ({ compact = fa
   };
 
   // If browser doesn't support beforeinstallprompt and it's not iOS, don't show or show friendly guide
-  if (!isInstallable && !isIOS) {
+  if (!isInstallable && !isIOS && !justInstalled) {
     return null;
   }
 
@@ -41,7 +41,7 @@ export const PWAInstallButton: React.FC<PWAInstallButtonProps> = ({ compact = fa
       {justInstalled ? (
         <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-100 border border-emerald-300 text-emerald-800 text-xs font-semibold animate-fade-in">
           <CheckCircle className="w-3.5 h-3.5 text-emerald-600" />
-          <span>Instalado!</span>
+          <span>Instalação solicitada</span>
         </div>
       ) : (
         <button

@@ -159,6 +159,8 @@ test('4. voltar à Novo Hiper, instalar a placa (fachada muda), sair/entrar e co
   // sai da loja: a fachada (do lado de fora) já mostra a placa instalada
   await leaveStore(page);
   await waitDelivery(page, 'd.shop.placaVisible');
+  await waitDelivery(page, 'd.worldStage.environmentalNeighbors === 1');
+  expect((await delivery(page)).worldStage?.obraLeste).toBe('parada');
 
   // sair da Aventura e voltar: a placa continua lá (estado vem do backend)
   await leaveAdventure(page);

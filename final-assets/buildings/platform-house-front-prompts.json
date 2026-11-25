@@ -1,0 +1,7 @@
+{
+  "mode": "built-in image_gen",
+  "reference": "house-depth-v1.png",
+  "master": "platform-house-front-master.png",
+  "runtime": "../runtime/platform-house.webp",
+  "prompt": "Edit target: the attached cream cottage with terracotta tile roof. Create a new SIDE-SCROLLING PLATFORM GAME version of precisely this charming house, retaining its cream stucco, warm orange tiled gable roof, centered wooden door, two blue windows and daisy window boxes, crisp colorful 16-bit pixel-art style and outlines. Strict orthographic straight front elevation: perfectly horizontal sill, eaves, window lines, threshold and foundation baseline; perfectly vertical walls and door jambs; roof peak centered symmetrically above the door. No visible side wall, no isometric angle, no perspective receding depth, no slant, no tilt. Both foundation corners and door threshold must rest on exactly the same horizontal ground line. Single complete isolated house centered with generous transparent margins, no ground, no cast shadow outside the building, no scenery, no text, no UI. True transparent background."
+}

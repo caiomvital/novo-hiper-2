@@ -21,11 +21,11 @@ export const EmptyState: React.FC<EmptyStateProps> = ({ onAddPlant }) => {
       </div>
 
       <h2 className="text-xl sm:text-2xl font-display font-bold text-stone-900 mb-2">
-        Catálogo do Novo Hiper Pronto
+        Vamos cadastrar sua primeira planta?
       </h2>
       <p className="text-stone-600 text-sm leading-relaxed mb-6 max-w-md mx-auto">
         Ainda não há plantas cadastradas no estoque da loja. 
-        Tire uma fotografia de uma planta ou flor, informe o nome e determine o preço de venda para abrir os pedidos!
+        Escolha uma foto, escreva o nome, o preço e quantas plantas você tem. Depois, os moradores poderão fazer pedidos!
       </p>
 
       <div className="flex items-center justify-center">
@@ -45,12 +45,12 @@ export const EmptyState: React.FC<EmptyStateProps> = ({ onAddPlant }) => {
           <p className="text-[11px] text-stone-500 mt-0.5">Plantas reais com a câmera</p>
         </div>
         <div className="p-3 rounded-xl bg-stone-50 border border-stone-100">
-          <p className="font-bold text-stone-900">2. Precifique</p>
+          <p className="font-bold text-stone-900">2. Escolha o preço</p>
           <p className="text-[11px] text-stone-500 mt-0.5">Defina o valor em R$</p>
         </div>
         <div className="p-3 rounded-xl bg-stone-50 border border-stone-100">
           <p className="font-bold text-stone-900">3. Entregue</p>
-          <p className="text-[11px] text-stone-500 mt-0.5">Despache pelo mapa</p>
+          <p className="text-[11px] text-stone-500 mt-0.5">Leve à casa na Aventura</p>
         </div>
       </div>
     </div>

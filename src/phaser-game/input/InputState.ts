@@ -32,6 +32,15 @@ export class InputState {
   /** Painel React aberto (loja): o jogo não consome teclado/touch e NÃO dá preventDefault (a interface HTML usa as teclas). */
   private suspended = false;
 
+  private clear = () => {
+    this.state = createEmptySnapshot();
+    this.latched = {};
+  };
+
+  private handleVisibility = () => {
+    if (document.hidden) this.clear();
+  };
+
   setSuspended(value: boolean) {
     this.suspended = value;
     if (value) {
@@ -60,11 +69,15 @@ export class InputState {
   attachKeyboard() {
     window.addEventListener('keydown', this.handleKeyDown);
     window.addEventListener('keyup', this.handleKeyUp);
+    window.addEventListener('blur', this.clear);
+    document.addEventListener('visibilitychange', this.handleVisibility);
   }
 
   detachKeyboard() {
     window.removeEventListener('keydown', this.handleKeyDown);
     window.removeEventListener('keyup', this.handleKeyUp);
+    window.removeEventListener('blur', this.clear);
+    document.removeEventListener('visibilitychange', this.handleVisibility);
     this.state = createEmptySnapshot();
     this.latched = {};
   }

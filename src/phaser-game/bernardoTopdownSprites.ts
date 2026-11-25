@@ -11,7 +11,7 @@ export function preloadBernardoTopdownSprites(scene: Phaser.Scene) {
 
 /** Cria as animações (uma vez por jogo): idle de 1 frame e caminhada de 4 frames para cada direção. */
 export function createBernardoTopdownAnimations(scene: Phaser.Scene) {
-  // O desenho é arte suavizada (não pixel art de grade): mantém o filtro do jogo, sem forçar NEAREST aqui
+  scene.textures.get(TOPDOWN_SPRITE.textureKey).setFilter(Phaser.Textures.FilterMode.NEAREST);
   (Object.keys(FACING_ROW) as Facing[]).forEach((facing) => {
     const idleKey = `idle-${facing}`;
     if (!scene.anims.exists(`td-${idleKey}`)) {

@@ -52,6 +52,8 @@ interface OrdersViewProps {
   onDispatchToMap: (order: CustomerOrder) => void;
   onStartGameDelivery?: (order: CustomerOrder) => void;
   onGoToCatalog: () => void;
+  pendingOrderId?: string | null;
+  error?: string | null;
 }
 
 export const OrdersView: React.FC<OrdersViewProps> = ({
@@ -60,7 +62,9 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
   onUpdateOrderStatus,
   onDispatchToMap,
   onStartGameDelivery,
-  onGoToCatalog
+  onGoToCatalog,
+  pendingOrderId,
+  error,
 }) => {
   const [filter, setFilter] = useState<'todos' | OrderStatus>('todos');
 
@@ -80,12 +84,10 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
   });
 
   const handleStartPrep = (orderId: string) => {
-    sounds.playPreparePlant();
     onUpdateOrderStatus(orderId, 'preparando');
   };
 
   const handleMarkReady = (orderId: string) => {
-    sounds.playBellRing();
     onUpdateOrderStatus(orderId, 'pronto');
   };
 
@@ -95,7 +97,7 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
   };
 
   // Se não houver plantas no catálogo
-  if (plants.length === 0) {
+  if (plants.length === 0 && orders.length === 0) {
     return (
       <div className="py-12 px-4 max-w-xl mx-auto text-center bg-white rounded-3xl border border-stone-200 shadow-xs p-8">
         <div className="w-16 h-16 rounded-2xl bg-amber-50 text-amber-600 border border-amber-200 flex items-center justify-center mx-auto mb-4">
@@ -105,7 +107,7 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
           Cadastre suas plantas primeiro!
         </h3>
         <p className="text-sm text-stone-600 mb-6 leading-relaxed">
-          Para que os clientes fictícios de Olinda façam pedidos na sua loja, é necessário ter produtos cadastrados com foto e preço no estoque do Novo Hiper.
+          Cadastre uma planta com foto, preço e quantidade. Assim, os moradores poderão fazer pedidos na sua loja.
         </p>
         <button
           id="btn-go-to-catalog-from-orders"
@@ -141,7 +143,7 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
             </span>
           </h3>
           <p className="text-xs sm:text-sm text-stone-600 mt-1">
-            Consulte as solicitações dos clientes, prepare os vasos de plantas e despache para entrega no mapa.
+            Veja os pedidos dos moradores. Na Aventura, pegue o vaso na loja e leve até a casa indicada. Você também pode entregar pela aba Entregas.
           </p>
         </div>
       </div>
@@ -296,7 +298,7 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
                 Nenhum pedido ainda
               </h4>
               <p className="text-xs text-stone-500 max-w-sm mx-auto mb-5">
-                O viveiro do Novo Hiper ainda está vazio. Cadastre e precifique suas primeiras plantas para que os clientes de Olinda façam pedidos!
+                Cadastre suas primeiras plantas com foto, preço e quantidade para receber pedidos dos moradores!
               </p>
               <button
                 type="button"
@@ -345,10 +347,11 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
 
             const matchedPlant = plants.find((p) => p.id === order.plantId);
             const stockAvailable = matchedPlant?.stock ?? 0;
-            const isOutOfStock = stockAvailable <= 0;
+            const isOutOfStock = order.deliverable === false || stockAvailable < order.quantity;
 
             return (
               <div
+                id={`order-card-${order.id}`}
                 key={order.id}
                 className={`bg-white rounded-3xl border transition-all duration-200 flex flex-col justify-between overflow-hidden shadow-xs hover:shadow-sm ${
                   isReady 
@@ -460,7 +463,7 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
                                 : 'bg-emerald-50 text-emerald-800 border-emerald-200'
                             }`}
                           >
-                            {isOutOfStock ? 'Sem estoque (0 un.)' : `${stockAvailable} un. no viveiro`}
+                            {isOutOfStock ? `Estoque insuficiente: ${stockAvailable} un.` : `${stockAvailable} un. no viveiro`}
                           </span>
                         </div>
                         <span className="text-sm font-display font-extrabold text-stone-900">
@@ -475,7 +478,7 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
                     <div className="mb-3 p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-xs flex items-center justify-between gap-2">
                       <div className="flex items-center gap-1.5 min-w-0">
                         <AlertCircle className="w-4 h-4 text-amber-700 flex-shrink-0" />
-                        <span className="truncate">Estoque zerado no viveiro.</span>
+                        <span>Reponha o estoque para atender este pedido.</span>
                       </div>
                       <button
                         type="button"
@@ -520,15 +523,17 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
 
                   {/* Ações do Fluxo */}
                   <div className="pt-2">
+                    {error && !isCompleted && <p role="alert" className="text-sm text-rose-800 mb-2">{error}</p>}
                     {isReceived && (
                       <div className="flex items-center gap-2">
                         <button
                           type="button"
                           onClick={() => handleStartPrep(order.id)}
+                          disabled={Boolean(pendingOrderId)}
                           className="flex-1 flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-display font-bold text-xs shadow-xs transition-all cursor-pointer"
                         >
                           <Sprout className="w-4 h-4" />
-                          <span>Preparar Planta</span>
+                          <span>{pendingOrderId === order.id ? 'Confirmando…' : 'Preparar Planta'}</span>
                         </button>
                         <button
                           type="button"
@@ -546,10 +551,11 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
                         <button
                           type="button"
                           onClick={() => handleMarkReady(order.id)}
+                          disabled={Boolean(pendingOrderId) || isOutOfStock}
                           className="flex-1 flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white font-display font-bold text-xs shadow-xs transition-all cursor-pointer"
                         >
                           <CheckCircle2 className="w-4 h-4" />
-                          <span>Marcar como Pronto</span>
+                          <span>{pendingOrderId === order.id ? 'Confirmando…' : 'Marcar como Pronto'}</span>
                         </button>
                         <button
                           type="button"
@@ -584,7 +590,7 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
                           }`}
                         >
                           <Gamepad2 className="w-4 h-4 text-emerald-300" />
-                          <span>{isOutOfStock ? 'Reabastecer Planta no Catálogo' : 'Entregar no Mini-Jogo 2D 🎮'}</span>
+                          <span>{isOutOfStock ? 'Reabastecer Planta no Catálogo' : 'Continuar na Aventura'}</span>
                           <ArrowRight className="w-4 h-4" />
                         </button>
 

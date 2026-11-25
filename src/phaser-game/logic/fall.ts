@@ -1,4 +1,4 @@
-import { PLATFORM, PLATFORM_FALL_LIMIT_Y, getGroundSegments } from '../config/platformConfig';
+import { PLATFORM, PLATFORM_FALL_LIMIT_Y, getGroundSegments, type GroundSegment } from '../config/platformConfig';
 
 export function hasFallenOffLevel(y: number): boolean {
   return y > PLATFORM_FALL_LIMIT_Y;
@@ -13,10 +13,10 @@ const CHECKPOINT_GROUND_TOLERANCE = 3;
  * e com folga das bordas — nunca encostado na parede lateral de uma vala.
  * `y` é o centro do corpo.
  */
-export function isSafeCheckpoint(x: number, y: number): boolean {
+export function isSafeCheckpoint(x: number, y: number, segments: GroundSegment[] = getGroundSegments()): boolean {
   const feetY = y + PLATFORM.playerHeight / 2;
   if (Math.abs(feetY - PLATFORM.groundY) > CHECKPOINT_GROUND_TOLERANCE) return false;
-  return getGroundSegments().some(
+  return segments.some(
     (seg) => x >= seg.x + CHECKPOINT_EDGE_MARGIN && x <= seg.x + seg.width - CHECKPOINT_EDGE_MARGIN
   );
 }

@@ -1,7 +1,9 @@
+import { useModalFocus } from '../hooks/useModalFocus';
 import React from 'react';
 import { Plant } from '../types';
 import { formatPrice } from '../services/storage';
 import { sounds } from '../services/sound';
+import { PlantPhoto } from './PlantPhoto';
 import { X, Edit3, Trash2, Calendar, Tag, Truck, CheckCircle2, Package, Plus, Minus, AlertCircle } from 'lucide-react';
 
 interface PlantDetailModalProps {
@@ -23,6 +25,7 @@ export const PlantDetailModal: React.FC<PlantDetailModalProps> = ({
   onSendToDelivery,
   onUpdateStock,
 }) => {
+  useModalFocus(isOpen, 'plant-detail-container', 'Detalhes da planta', onClose);
   if (!isOpen || !plant) return null;
 
   const formattedDate = new Intl.DateTimeFormat('pt-BR', {
@@ -83,7 +86,7 @@ export const PlantDetailModal: React.FC<PlantDetailModalProps> = ({
 
         {/* Featured Botanical Photo */}
         <div className="relative w-full aspect-4/3 bg-stone-100 overflow-hidden">
-          <img
+          <PlantPhoto
             src={plant.photoUrl}
             alt={plant.name}
             className="w-full h-full object-cover"
@@ -195,10 +198,10 @@ export const PlantDetailModal: React.FC<PlantDetailModalProps> = ({
               )}
             </div>
 
-            {plant.stock === 0 && (
+            {plant.stock <= 2 && (
               <div className="mt-3 p-2.5 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-800 flex items-center gap-2">
                 <AlertCircle className="w-4 h-4 text-rose-600 flex-shrink-0" />
-                <span>Esta planta está esgotada. Toque no botão <strong>+</strong> acima para repor o estoque!</span>
+                <span>{plant.stock === 0 ? 'Esta planta está esgotada.' : 'Há poucas plantas disponíveis.'} Toque em <strong>Editar</strong> para repor a quantidade em estoque.</span>
               </div>
             )}
           </div>

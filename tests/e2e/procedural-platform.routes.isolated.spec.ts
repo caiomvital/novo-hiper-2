@@ -1,0 +1,62 @@
+import { expect, test } from '@playwright/test';
+import { login, openAdventure, state, teleport, waitForScene, runToGoal } from './helpers';
+import { closeSuiteOrders } from './suiteData';
+import { ENTRANCE_ZONE } from '../../src/phaser-game/config/worldConfig';
+import { PLATFORM, PLATFORM_FALL_LIMIT_Y } from '../../src/phaser-game/config/platformConfig';
+
+test.use({ hasTouch: true, viewport: { width: 760, height: 440 } });
+test('semente muda na próxima entrada, mantém o mapa na queda/zoom/rotação e usa a floresta local', async ({ page }) => {
+  test.setTimeout(300_000);
+  const errors: string[] = [], images = new Set<string>();
+  page.on('pageerror', e => errors.push(e.message));
+  page.on('response', r => { if (r.url().includes('/runtime/') && r.status() === 200 && r.headers()['content-type']?.startsWith('image/')) images.add(r.url()); });
+  await login(page); await closeSuiteOrders(page); await openAdventure(page);
+  await page.locator('#btn-adventure-fullscreen').click();
+  await page.waitForFunction(() => Boolean(document.fullscreenElement));
+  async function captureWorld(x: number, y: number, file: string) {
+    await teleport(page, x, y);
+    await page.waitForFunction(() => {
+      const s = window.__NH_ADVENTURE__?.getState(), c = s?.camera;
+      return c && s?.player && Math.abs(s.player.x - c.scrollX - c.width / 2) < 12 && Math.abs(s.player.y - c.scrollY - c.height / 2) < 12;
+    });
+    await page.screenshot({ path: `docs/evidence/procedural-platform/${file}.png` });
+  }
+  await captureWorld(450, 900, 'patios-oeste');
+  await captureWorld(1032, 1515, 'hortas');
+  await captureWorld(1768, 960, 'praca-assimetrica');
+  const cash = await (await page.request.get('/api/cash')).json();
+  await teleport(page, ENTRANCE_ZONE.x, ENTRANCE_ZONE.y); await waitForScene(page, 'platform');
+  await page.waitForFunction(() => window.__NH_ADVENTURE__?.getState().platform?.grounded);
+  const first = (await state(page)).platform!;
+  expect(first.scenery).toBe('open-meadow'); expect(first.generatorVersion).toBe(1);
+  expect(images.size).toBeGreaterThanOrEqual(9);
+  console.log('primeira semente procedural:', first.seed, JSON.stringify(first.gaps));
+  await page.screenshot({ path: 'docs/evidence/procedural-platform/floresta-inicial.png' });
+  const safeX = first.gaps![0].end + 80;
+  await teleport(page, safeX, PLATFORM.groundY - 22);
+  await page.waitForFunction(x => Math.abs((window.__NH_ADVENTURE__?.getState().lastSafeGround?.x ?? 0) - x) < 5, safeX);
+  await teleport(page, first.gaps![1].start + 20, PLATFORM_FALL_LIMIT_Y + 30);
+  await page.waitForFunction(() => (window.__NH_ADVENTURE__?.getState().fallRespawns ?? 0) > 0);
+  expect((await state(page)).player!.x).toBeCloseTo(safeX, 0);
+  await page.locator('#btn-platform-zoom-out').click();
+  await page.setViewportSize({ width: 844, height: 390 });
+  expect((await state(page)).platform!.seed).toBe(first.seed);
+  expect((await state(page)).platform!.segments).toEqual(first.segments);
+  await page.locator('#btn-platform-zoom-reset').click();
+  await teleport(page, 120, PLATFORM.groundY - 22);
+  await runToGoal(page, 120_000);
+  await page.waitForFunction(() => window.__NH_ADVENTURE__?.getState().platform?.confirmationVisible);
+  await page.screenshot({ path: 'docs/evidence/procedural-platform/chegada.png' });
+  await page.keyboard.press('Enter'); await waitForScene(page, 'world');
+  expect((await (await page.request.get('/api/cash')).json()).balance).toBe(cash.balance);
+  await teleport(page, 1032, 1130);
+  await page.waitForFunction(() => window.__NH_ADVENTURE__?.getState().entranceArmed);
+  await teleport(page, ENTRANCE_ZONE.x, ENTRANCE_ZONE.y); await waitForScene(page, 'platform');
+  const second = (await state(page)).platform!;
+  expect(second.seed).not.toBe(first.seed);
+  expect(second.segments).not.toEqual(first.segments);
+  console.log('segunda semente procedural:', second.seed, JSON.stringify(second.gaps));
+  await page.screenshot({ path: 'docs/evidence/procedural-platform/novo-percurso.png' });
+  await page.locator('#btn-platform-exit').click(); await waitForScene(page, 'world');
+  expect(errors).toEqual([]);
+});

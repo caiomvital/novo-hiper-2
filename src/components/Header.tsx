@@ -51,11 +51,11 @@ export const Header: React.FC<HeaderProps> = ({
   };
 
   return (
-    <header className="sticky top-0 z-30 bg-white/95 backdrop-blur-md border-b border-stone-200/90 shadow-2xs">
-      <div className="max-w-5xl mx-auto px-4 py-3 sm:py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+    <header className="shop-header sticky top-0 z-30 bg-white/95 backdrop-blur-md border-b border-stone-200/90 shadow-2xs">
+      <div className="shop-header-layout max-w-5xl mx-auto px-4 py-3 sm:py-3.5 flex flex-col sm:flex-row sm:flex-wrap sm:items-center justify-between gap-3">
         {/* Logo and Shop Identification */}
-        <div className="flex items-center justify-between sm:justify-start gap-3">
-          <div className="flex items-center gap-3">
+        <div className="shop-branding flex flex-wrap items-center justify-between sm:justify-start gap-3">
+          <div className="shop-logo flex items-center gap-3">
             <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-2xl bg-emerald-800 flex items-center justify-center text-white shadow-sm flex-shrink-0">
               <Leaf className="w-6 h-6 text-emerald-300" />
             </div>
@@ -93,6 +93,7 @@ export const Header: React.FC<HeaderProps> = ({
               }}
               className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-amber-50 hover:bg-amber-100 border border-amber-200 text-amber-900 font-display font-bold text-xs cursor-pointer"
               title="Caixa Virtual"
+              aria-label="Abrir caixa da loja"
             >
               <Coins className="w-3.5 h-3.5 text-amber-600" />
               <span>{formatPrice(cashBalance)}</span>
@@ -126,7 +127,7 @@ export const Header: React.FC<HeaderProps> = ({
         </div>
 
         {/* Center: Navigation Tabs */}
-        <div className="flex items-center gap-1 bg-stone-100 p-1 rounded-2xl border border-stone-200 self-stretch sm:self-auto overflow-x-auto">
+        <div role="navigation" aria-label="Navegação da loja" className="shop-navigation flex items-center gap-1 bg-stone-100 p-1 rounded-2xl border border-stone-200 self-stretch sm:self-auto overflow-x-auto">
           <button
             id="tab-btn-catalog"
             type="button"
@@ -198,7 +199,7 @@ export const Header: React.FC<HeaderProps> = ({
         </div>
 
         {/* Right Actions */}
-        <div className="hidden sm:flex items-center gap-2">
+        <div className="shop-actions hidden sm:flex items-center gap-2">
           <button
             id="btn-open-cash-desktop"
             type="button"

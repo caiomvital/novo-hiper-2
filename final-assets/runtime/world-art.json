@@ -1,0 +1,161 @@
+{
+  "platform-house": {
+    "width": 512,
+    "height": 468,
+    "sourceWidth": 1312,
+    "sourceHeight": 1199,
+    "frames": {
+      "facade": [
+        64,
+        38,
+        384,
+        381
+      ]
+    }
+  },
+  "houses": {
+    "width": 1024,
+    "height": 960,
+    "sourceWidth": 1295,
+    "sourceHeight": 1214,
+    "frames": {
+      "cream": [
+        42,
+        52,
+        453,
+        377
+      ],
+      "sage": [
+        529,
+        52,
+        452,
+        377
+      ],
+      "blush": [
+        42,
+        493,
+        453,
+        378
+      ],
+      "blue": [
+        529,
+        493,
+        452,
+        378
+      ]
+    }
+  },
+  "houses-north": {
+    "width": 1024,
+    "height": 961,
+    "sourceWidth": 1295,
+    "sourceHeight": 1215,
+    "frames": {
+      "cream": [
+        43,
+        58,
+        466,
+        383
+      ],
+      "sage": [
+        513,
+        58,
+        468,
+        383
+      ],
+      "blush": [
+        43,
+        499,
+        466,
+        381
+      ],
+      "blue": [
+        513,
+        499,
+        468,
+        381
+      ]
+    }
+  },
+  "urban": {
+    "width": 768,
+    "height": 753,
+    "sourceWidth": 1266,
+    "sourceHeight": 1242,
+    "frames": {
+      "tree-small": [
+        87,
+        102,
+        226,
+        275
+      ],
+      "tree-medium": [
+        397,
+        54,
+        318,
+        323
+      ],
+      "bench": [
+        75,
+        377,
+        294,
+        314
+      ],
+      "flowers": [
+        425,
+        377,
+        267,
+        334
+      ]
+    }
+  },
+  "shop": {
+    "width": 1024,
+    "height": 788,
+    "sourceWidth": 1430,
+    "sourceHeight": 1100,
+    "frames": {
+      "facade": [
+        52,
+        33,
+        944,
+        707
+      ]
+    }
+  },
+  "house": {
+    "width": 768,
+    "height": 702,
+    "sourceWidth": 1312,
+    "sourceHeight": 1199,
+    "frames": {
+      "house": [
+        92,
+        56,
+        593,
+        583
+      ]
+    }
+  },
+  "terrain": {
+    "width": 1408,
+    "height": 768,
+    "sourceWidth": 2816,
+    "sourceHeight": 1536,
+    "frames": {}
+  },
+  "residents": {
+    "width": 887,
+    "height": 1774,
+    "sourceWidth": 887,
+    "sourceHeight": 1774,
+    "frames": {}
+  },
+  "residents-walk": {
+    "width": 1536,
+    "height": 1024,
+    "sourceWidth": 1536,
+    "sourceHeight": 1024,
+    "frames": {}
+  }
+}

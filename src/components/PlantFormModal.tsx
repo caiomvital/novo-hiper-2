@@ -1,8 +1,11 @@
+import { useModalFocus } from '../hooks/useModalFocus';
 import React, { useState, useRef, useEffect } from 'react';
 import { Plant } from '../types';
-import { REALISTIC_PLANT_PRESETS, CARE_TAGS, compressImage } from '../services/storage';
+import { REALISTIC_PLANT_PRESETS, CARE_TAGS } from '../services/storage';
+import { parsePlantPrice, parsePlantStock } from '../shared/plantNumbers';
 import { api } from '../services/api';
 import { sounds } from '../services/sound';
+import { PlantPhoto } from './PlantPhoto';
 import { Camera, Image as ImageIcon, Sparkles, X, Check, AlertCircle, Trash2, RefreshCw, Layers, Package, Plus, Minus } from 'lucide-react';
 import confetti from 'canvas-confetti';
 
@@ -10,7 +13,8 @@ interface PlantFormModalProps {
   initialPlant?: Plant | null;
   isOpen: boolean;
   onClose: () => void;
-  onSave: (plantData: Omit<Plant, 'id' | 'createdAt'> & { id?: string; createdAt?: number }) => void;
+  onSave: (plantData: Omit<Plant, 'id' | 'createdAt'> & { id?: string; createdAt?: number }) => Promise<void>;
+  hasOpenOrder?: boolean;
 }
 
 export const PlantFormModal: React.FC<PlantFormModalProps> = ({
@@ -18,6 +22,7 @@ export const PlantFormModal: React.FC<PlantFormModalProps> = ({
   isOpen,
   onClose,
   onSave,
+  hasOpenOrder = false,
 }) => {
   const [name, setName] = useState('');
   const [species, setSpecies] = useState('');
@@ -28,11 +33,21 @@ export const PlantFormModal: React.FC<PlantFormModalProps> = ({
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [isProcessingPhoto, setIsProcessingPhoto] = useState(false);
   const [showPresets, setShowPresets] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const savingRef = useRef(false);
+  const photoPendingRef = useRef(false);
+  const photoEpoch = useRef(0);
+  const creationId = useRef('');
+  useEffect(() => { if (errorMsg) document.querySelector('#plant-form-container [role="alert"]')?.scrollIntoView({ block: 'nearest' }); }, [errorMsg]);
 
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const galleryInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
+    creationId.current = crypto.randomUUID();
+    const epoch = ++photoEpoch.current;
+    photoPendingRef.current = false;
+    setIsProcessingPhoto(false);
     if (initialPlant) {
       setName(initialPlant.name);
       setSpecies(initialPlant.species || '');
@@ -50,33 +65,48 @@ export const PlantFormModal: React.FC<PlantFormModalProps> = ({
     }
     setErrorMsg(null);
     setShowPresets(false);
+    return () => { if (photoEpoch.current === epoch) photoEpoch.current++; };
   }, [initialPlant, isOpen]);
 
+  useModalFocus(isOpen, 'plant-form-container', 'Cadastro de planta', () => { if (!isSaving && !isProcessingPhoto) onClose(); });
   if (!isOpen) return null;
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (!file) return;
+    if (!file || photoPendingRef.current || savingRef.current) return;
+    const input = e.target;
+    const epoch = photoEpoch.current;
+    photoPendingRef.current = true;
 
     setIsProcessingPhoto(true);
     setErrorMsg(null);
     try {
-      let finalUrl = '';
+      if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) throw new Error('Escolha uma foto JPG, PNG ou WEBP.');
+      if (file.size > 5 * 1024 * 1024) throw new Error('A foto é grande demais. Escolha uma imagem de até 5 MB.');
+      const localUrl = URL.createObjectURL(file);
       try {
-        finalUrl = await api.uploadImage(file);
-      } catch (uploadErr) {
-        console.warn('Servidor offline para upload direto, usando compressão local:', uploadErr);
-        finalUrl = await compressImage(file, 800, 0.85);
-      }
+        await new Promise<void>((resolve, reject) => {
+          const image = new Image();
+          image.onload = () => resolve();
+          image.onerror = () => reject(new Error('Este arquivo não contém uma foto válida. Escolha outra imagem.'));
+          image.src = localUrl;
+        });
+      } finally { URL.revokeObjectURL(localUrl); }
+      if (photoEpoch.current !== epoch) return;
+      const finalUrl = await api.uploadImage(file);
+      if (photoEpoch.current !== epoch) return;
       setPhotoUrl(finalUrl);
       setShowPresets(false);
       sounds.playSelectPhoto();
     } catch (err) {
-      console.error(err);
-      setErrorMsg('Não foi possível carregar a fotografia. Tente novamente.');
+      if (photoEpoch.current === epoch) setErrorMsg(err instanceof Error && !(err instanceof TypeError) && !['TimeoutError', 'AbortError'].includes(err.name)
+        ? err.message : 'Não foi possível enviar a foto. Confira sua conexão e escolha a foto novamente.');
     } finally {
-      setIsProcessingPhoto(false);
-      e.target.value = '';
+      if (photoEpoch.current === epoch) {
+        photoPendingRef.current = false;
+        setIsProcessingPhoto(false);
+        input.value = '';
+      }
     }
   };
 
@@ -85,7 +115,6 @@ export const PlantFormModal: React.FC<PlantFormModalProps> = ({
     if (!name) setName(preset.name);
     if (!species) setSpecies(preset.species);
     if (!price) setPrice(preset.price.toString());
-    if (preset.stock !== undefined) setStock(preset.stock.toString());
     if (!careTag) setCareTag(preset.careTag);
     setShowPresets(false);
     setErrorMsg(null);
@@ -100,7 +129,8 @@ export const PlantFormModal: React.FC<PlantFormModalProps> = ({
 
   const handleStockDelta = (delta: number) => {
     sounds.playPop();
-    const current = parseInt(stock, 10) || 0;
+    const current = parsePlantStock(stock);
+    if (current === null) { setErrorMsg('Digite uma quantidade inteira antes de usar + ou −.'); return; }
     const next = Math.max(0, current + delta);
     setStock(next.toString());
     setErrorMsg(null);
@@ -117,8 +147,9 @@ export const PlantFormModal: React.FC<PlantFormModalProps> = ({
     setCareTag(careTag === tag ? '' : tag);
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (savingRef.current || photoPendingRef.current) return;
 
     const trimmedName = name.trim();
     if (!trimmedName) {
@@ -126,14 +157,14 @@ export const PlantFormModal: React.FC<PlantFormModalProps> = ({
       return;
     }
 
-    const parsedPrice = parseFloat(price.replace(',', '.'));
-    if (isNaN(parsedPrice) || parsedPrice < 0) {
-      setErrorMsg('Digite um preço numérico válido em reais (R$).');
+    const parsedPrice = parsePlantPrice(price);
+    if (parsedPrice === null) {
+      setErrorMsg('Digite um preço igual ou maior que zero, com até dois centavos (ex.: 20,50).');
       return;
     }
 
-    const parsedStock = parseInt(stock, 10);
-    if (isNaN(parsedStock) || parsedStock < 0) {
+    const parsedStock = parsePlantStock(stock);
+    if (parsedStock === null) {
       setErrorMsg('Informe uma quantidade válida para o estoque (número inteiro igual ou maior que zero).');
       return;
     }
@@ -143,28 +174,35 @@ export const PlantFormModal: React.FC<PlantFormModalProps> = ({
       return;
     }
 
+    savingRef.current = true;
+    setIsSaving(true);
+    setErrorMsg(null);
     try {
-      confetti({
+      await onSave({
+        id: initialPlant?.id ?? creationId.current,
+        createdAt: initialPlant?.createdAt,
+        name: trimmedName,
+        species: species.trim() || undefined,
+        price: parsedPrice,
+        stock: parsedStock,
+        photoUrl,
+        careTag: careTag || undefined,
+        isExample: false,
+      });
+      try { confetti({
         particleCount: 45,
         spread: 60,
         origin: { y: 0.6 },
         colors: ['#047857', '#059669', '#10b981', '#34d399'],
-      });
-    } catch {}
-
-    onSave({
-      id: initialPlant?.id,
-      createdAt: initialPlant?.createdAt,
-      name: trimmedName,
-      species: species.trim() || undefined,
-      price: Math.round(parsedPrice * 100) / 100,
-      stock: parsedStock,
-      photoUrl,
-      careTag: careTag || undefined,
-      isExample: false,
-    });
-
-    onClose();
+      }); } catch {}
+      onClose();
+    } catch (err) {
+      setErrorMsg(err instanceof Error && !(err instanceof TypeError) && !['TimeoutError', 'AbortError'].includes(err.name)
+        ? err.message : 'Não foi possível confirmar o cadastro. Confira sua conexão e tente salvar novamente.');
+    } finally {
+      savingRef.current = false;
+      setIsSaving(false);
+    }
   };
 
   return (
@@ -186,6 +224,7 @@ export const PlantFormModal: React.FC<PlantFormModalProps> = ({
           <button
             id="btn-close-form"
             onClick={onClose}
+            disabled={isSaving}
             className="w-8 h-8 rounded-full bg-white hover:bg-stone-100 text-stone-500 hover:text-stone-800 flex items-center justify-center border border-stone-200 transition-colors cursor-pointer"
             aria-label="Fechar"
           >
@@ -194,13 +233,16 @@ export const PlantFormModal: React.FC<PlantFormModalProps> = ({
         </div>
 
         {/* Modal Form Body */}
-        <form onSubmit={handleSubmit} className="p-5 overflow-y-auto space-y-4.5 flex-1">
+        <form noValidate onSubmit={handleSubmit} className="p-5 overflow-y-auto space-y-4.5 flex-1">
           {errorMsg && (
-            <div className="p-3.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs sm:text-sm flex items-start gap-2">
+            <div role="alert" className="p-3.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs sm:text-sm flex items-start gap-2">
               <AlertCircle className="w-4 h-4 text-rose-600 flex-shrink-0 mt-0.5" />
               <span>{errorMsg}</span>
             </div>
           )}
+          <fieldset disabled={isSaving || isProcessingPhoto} className="space-y-4.5 min-w-0">
+          {hasOpenOrder && <p role="status" className="rounded-xl bg-amber-50 p-3 text-sm text-amber-900">Esta planta tem um pedido em andamento. Alterar o preço vale para novos pedidos. Se o estoque acabar, será preciso repor para concluir a entrega.</p>}
+          {isProcessingPhoto && <p role="status" className="text-sm text-emerald-800">Enviando a foto… Aguarde a confirmação.</p>}
 
           {/* Section 1: Realistic Plant Photo */}
           <div>
@@ -210,15 +252,16 @@ export const PlantFormModal: React.FC<PlantFormModalProps> = ({
 
             {photoUrl ? (
               <div className="relative rounded-2xl overflow-hidden border border-stone-200 bg-stone-100 aspect-4/3 flex items-center justify-center group">
-                <img
+                <PlantPhoto
                   src={photoUrl}
                   alt="Fotografia da planta"
                   className="w-full h-full object-cover"
                 />
-                <div className="absolute inset-0 bg-stone-900/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
+                <div className="absolute inset-0 bg-stone-900/40 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
                   <button
+                    id="btn-replace-photo"
                     type="button"
-                    onClick={() => cameraInputRef.current?.click()}
+                    onClick={() => galleryInputRef.current?.click()}
                     className="px-3 py-1.5 rounded-xl bg-white text-stone-900 font-bold text-xs flex items-center gap-1.5 shadow-sm hover:bg-stone-50 cursor-pointer"
                   >
                     <RefreshCw className="w-3.5 h-3.5 text-emerald-700" />
@@ -299,7 +342,7 @@ export const PlantFormModal: React.FC<PlantFormModalProps> = ({
                           onClick={() => handleSelectPreset(preset)}
                           className="p-2 rounded-xl bg-white hover:border-emerald-600 border border-stone-200 flex flex-col items-start gap-1.5 transition-all cursor-pointer text-left group"
                         >
-                          <img
+                          <PlantPhoto
                             src={preset.imageUrl}
                             alt={preset.name}
                             className="w-full h-20 rounded-lg object-cover"
@@ -321,6 +364,7 @@ export const PlantFormModal: React.FC<PlantFormModalProps> = ({
             )}
 
             <input
+              id="input-camera-photo"
               ref={cameraInputRef}
               type="file"
               accept="image/*"
@@ -329,12 +373,14 @@ export const PlantFormModal: React.FC<PlantFormModalProps> = ({
               onChange={handleFileChange}
             />
             <input
+              id="input-gallery-photo"
               ref={galleryInputRef}
               type="file"
               accept="image/*"
               className="hidden"
               onChange={handleFileChange}
             />
+            <p className="text-xs text-stone-500 mt-2">JPG, PNG ou WEBP, até 5 MB. Se a câmera não abrir, permita o acesso às fotos nas configurações do celular ou use a Galeria de Fotos.</p>
           </div>
 
           {/* Section 2: Name and Botanical Species */}
@@ -391,9 +437,8 @@ export const PlantFormModal: React.FC<PlantFormModalProps> = ({
               </span>
               <input
                 id="input-plant-price"
-                type="number"
-                step="0.50"
-                min="0"
+                type="text"
+                inputMode="decimal"
                 value={price}
                 onChange={(e) => {
                   setPrice(e.target.value);
@@ -449,9 +494,8 @@ export const PlantFormModal: React.FC<PlantFormModalProps> = ({
               <div className="relative flex-1">
                 <input
                   id="input-plant-stock"
-                  type="number"
-                  step="1"
-                  min="0"
+                  type="text"
+                  inputMode="numeric"
                   value={stock}
                   onChange={(e) => {
                     setStock(e.target.value);
@@ -540,9 +584,10 @@ export const PlantFormModal: React.FC<PlantFormModalProps> = ({
               className="px-5 py-2.5 rounded-xl bg-emerald-800 hover:bg-emerald-900 active:bg-emerald-950 text-white font-display font-bold text-sm shadow-xs transition-all cursor-pointer flex items-center gap-2"
             >
               <Check className="w-4 h-4 stroke-[2.5]" />
-              <span>{initialPlant ? 'Salvar Alterações' : 'Cadastrar no Estoque'}</span>
+              <span>{isSaving ? 'Salvando…' : initialPlant ? 'Salvar Alterações' : 'Cadastrar no Estoque'}</span>
             </button>
           </div>
+          </fieldset>
         </form>
       </div>
     </div>

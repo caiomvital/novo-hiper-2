@@ -21,7 +21,7 @@ export const BackendStatusBanner: React.FC<BackendStatusBannerProps> = ({
         <div className="flex items-center gap-2 max-w-4xl mx-auto w-full">
           <AlertCircle className="w-4 h-4 text-amber-600 flex-shrink-0" />
           <span>
-            <strong>Modo Local:</strong> O backend SQLite não respondeu. Seus dados continuam salvos no navegador com segurança.
+            <strong>Conferindo conexão:</strong> Os dados exibidos podem estar desatualizados. Confira a internet antes de salvar, entregar ou comprar; a loja tentará atualizar novamente.
           </span>
         </div>
       </div>
@@ -38,12 +38,12 @@ export const BackendStatusBanner: React.FC<BackendStatusBannerProps> = ({
           </span>
           <div className="flex items-center gap-1.5 font-medium">
             <Server className="w-3.5 h-3.5 text-emerald-400" />
-            <span>Backend Node.js + SQLite ativo</span>
+            <span>Loja conectada</span>
             <span className="text-emerald-500">•</span>
             <span className="text-emerald-300">
               {migrationResult?.migrated
-                ? 'Persistência no servidor ativa'
-                : 'Pronto para persistência'}
+                ? 'Dados da loja disponíveis'
+                : 'Conferindo seus dados'}
             </span>
           </div>
         </div>
@@ -52,18 +52,18 @@ export const BackendStatusBanner: React.FC<BackendStatusBannerProps> = ({
           {isMigrating ? (
             <span className="flex items-center gap-1 text-emerald-300">
               <RefreshCw className="w-3 h-3 animate-spin" />
-              Migrando localStorage...
+              Carregando seus dados…
             </span>
           ) : migrationResult?.counts ? (
             <span className="hidden sm:inline text-emerald-400/90 text-[11px]">
-              {migrationResult.counts.plants} plantas • {migrationResult.counts.orders} pedidos no SQLite
+              {migrationResult.counts.plants} plantas • {migrationResult.counts.orders} pedidos
             </span>
           ) : (
             <button
               onClick={onTriggerMigration}
               className="px-2 py-0.5 rounded bg-emerald-800 hover:bg-emerald-700 text-white font-medium text-[11px] transition-colors cursor-pointer"
             >
-              Sincronizar com SQLite
+              Conferir conexão
             </button>
           )}
         </div>

@@ -16,6 +16,8 @@ export interface AdventureOrder {
   /** Destino congelado no pedido ("<região>/<casa>" ou id legado); o Phaser resolve pelo catálogo do mapa. */
   destinationId: string;
   plantName: string;
+  plantPhotoUrl?: string;
+  quantity?: number;
   /** O estoque atual cobre o pedido? (calculado pelo backend; false = precisa repor estoque). */
   deliverable: boolean;
   /** Valor do pedido em reais (o servidor é a autoridade; aqui é só para exibir). */
@@ -27,7 +29,7 @@ export interface AdventureOrder {
   status: OrderStatus;
 }
 
-export type DeliveryPhase = 'idle' | 'delivering' | 'done' | 'error';
+export type DeliveryPhase = 'idle' | 'picking' | 'delivering' | 'done' | 'error';
 
 export interface AdventureSnapshot {
   /** Pedidos já foram carregados do servidor? (evita mostrar "sem entregas" antes da hora) */
@@ -50,6 +52,8 @@ export interface AdventureSnapshot {
   stockHint: StockHint | null;
   /** Estágio visual do mundo (Progressão 2B): obra leste e vizinhos ambientais. Derivado dos marcos pelo backend. */
   worldStage: WorldStage;
+  /** Orientação local escolhida pelo jogador, sem alterar pedido ou finanças. */
+  navigationGoal: 'store' | 'utilities' | null;
 }
 
 export interface DeliverIntent {
@@ -74,7 +78,13 @@ export interface NavigateIntent {
   type: 'navigate';
   tab: 'pedidos' | 'catalogo';
 }
-export type AdventureIntent = DeliverIntent | PickupIntent | OpenShopIntent | OpenInstallIntent | NavigateIntent;
+export interface CompletePlatformIntent {
+  type: 'completePlatform';
+  orderId: string;
+  destinationId: string;
+  done: (result: { point?: { x: number; y: number }; error?: string }) => void;
+}
+export type AdventureIntent = DeliverIntent | PickupIntent | OpenShopIntent | OpenInstallIntent | NavigateIntent | CompletePlatformIntent;
 
 export const DELIVERY_FEEDBACK_MS = 3000;
 export const DELIVERY_ERROR_MS = 3500;
@@ -91,6 +101,7 @@ export const INITIAL_SNAPSHOT: AdventureSnapshot = {
   pendingUpgrades: [],
   uiOpen: false,
   stockHint: null,
+  navigationGoal: null,
   worldStage: { obraLeste: 'parada', environmentalNeighbors: 0 },
 };
 

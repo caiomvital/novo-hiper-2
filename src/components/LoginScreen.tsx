@@ -1,9 +1,10 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { Leaf, Lock, User, Eye, EyeOff, LogIn, AlertCircle, Sparkles } from 'lucide-react';
 import { login } from '../services/auth';
 import { sounds } from '../services/sound';
 import { PWAInstallButton } from './PWAInstallButton';
 import { OfflineBanner } from './OfflineBanner';
+import { BookPromo } from './BookPromo';
 
 interface LoginScreenProps {
   onLoginSuccess: () => void;
@@ -15,9 +16,12 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
   const [showPassword, setShowPassword] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const submittingRef = useRef(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (submittingRef.current) return;
+    submittingRef.current = true;
     setErrorMessage(null);
     setIsSubmitting(true);
 
@@ -35,6 +39,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
       sounds.playDeleteConfirm();
       setErrorMessage('Erro de comunicação com o servidor.');
     } finally {
+      submittingRef.current = false;
       setIsSubmitting(false);
     }
   };
@@ -58,7 +63,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
             <span>Loja de Plantas e Jardinagem</span>
           </div>
           <p className="text-xs sm:text-sm text-stone-500 mt-2 font-medium">
-            Digite a senha para abrir a portaria do viveiro
+            Digite seu nome e sua senha para entrar na loja
           </p>
         </div>
 
@@ -159,7 +164,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
                 className="w-full flex items-center justify-center gap-2 bg-emerald-800 hover:bg-emerald-900 active:bg-emerald-950 text-white font-display font-bold text-sm sm:text-base py-3.5 px-4 rounded-xl shadow-xs transition-all cursor-pointer disabled:opacity-75"
               >
                 <LogIn className="w-4 h-4" />
-                <span>Entrar na Loja 🪴</span>
+                <span>{isSubmitting ? 'Entrando…' : 'Entrar na Loja 🪴'}</span>
               </button>
             </div>
           </form>
@@ -169,6 +174,8 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
         <div className="mt-4 flex justify-center">
           <PWAInstallButton />
         </div>
+
+        <BookPromo className="mt-5" />
 
         {/* Rodapé sutil */}
         <p className="text-center text-[11px] text-stone-500 mt-4">

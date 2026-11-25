@@ -27,7 +27,7 @@ export const OfflineBanner: React.FC = () => {
     >
       <WifiOff className="w-4 h-4 text-amber-700 flex-shrink-0 animate-pulse" />
       <span>
-        Você está sem internet, mas suas plantas, pedidos e caixa continuam seguros localmente!
+        Você está sem internet. Pode consultar os últimos dados carregados. Salvar, entregar e comprar precisam de conexão; ao reconectar, a loja confere os dados do servidor.
       </span>
     </div>
   );

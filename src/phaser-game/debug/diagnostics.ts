@@ -2,10 +2,18 @@ import type Phaser from 'phaser';
 import type { InputState } from '../input/InputState';
 
 export interface AdventureDiagnostics {
+  residentGarden?: { planted: boolean; plantName: string | null; x: number; y: number; npcVisible: boolean; destinationId: string };
   scene: 'world' | 'platform' | 'interior' | null;
   player: { x: number; y: number } | null;
   transitioning: boolean;
   goalReached: boolean;
+  platform?: { routeId?: string; routeName?: string; seed?: number; generatorVersion?: number; scenery?: string; space?: 'park' | 'delivery'; levelWidth?: number; goal?: {x:number;y:number}; bouncePads?: Array<{x:number;y:number}>; springBounces?: number; goalHouse?: {texture:string;baseline:number;rotation:number}; segments?: Array<{ x: number; width: number }>; gaps?: Array<{ start: number; end: number; width: number }>; confirmationReady: boolean; confirmationVisible: boolean;
+    zoom?: number; grounded?: boolean; visit?: number; flowers?: number; obstacleHits?: number;
+    ledges?: Array<{ x: number; y: number; width: number }>;
+    flowerPoints?: Array<{ x: number; y: number; collected: boolean }>;
+    cart?: { x: number; y: number }; checkpoint?: { x: number; y: number };
+    checkpoints?: Array<{ x: number; y: number; active: boolean }>;
+  } | null;
   entranceArmed: boolean;
   fallRespawns: number;
   lastSafeGround?: { x: number; y: number } | null;
@@ -18,6 +26,7 @@ export interface AdventureDiagnostics {
     scale: number;
     body: { x: number; y: number; width: number; height: number };
   } | null;
+  neighbors?: Array<{ id: string; x: number; y: number; visible: boolean; moving: boolean; attentive: boolean; facing: string; frame: string; texture: string; depth: number }>;
   canvasCount: number;
   /** Só na WorldScene: número da instância da cena (muda se a cena for recriada). */
   instance?: number;
@@ -34,17 +43,18 @@ export interface AdventureDiagnostics {
   /** Só na WorldScene: estado da entrega (vertical slice). */
   delivery?: {
     loaded: boolean;
-    phase: 'idle' | 'delivering' | 'done' | 'error';
+    phase: 'idle' | 'picking' | 'delivering' | 'done' | 'error';
     activeOrderId: string | null;
     customerName: string | null;
     customerVisible: boolean;
+    customerAppearance?: { texture: string; frame: string; scale: number; x?: number; y?: number; depth?: number } | null;
     customer: { x: number; y: number };
     destination: { id: string; status: 'house' | 'unknown'; houseId: string | null; legacy: boolean } | null;
     highlightVisible: boolean;
     near: boolean;
     promptVisible: boolean;
     hud: string;
-    indicator: { meters: number; near: boolean; angle: number; text: string; arrowVisible: boolean } | null;
+    indicator: { name?: string; meters: number; near: boolean; angle: number; text: string; arrowVisible: boolean } | null;
     lastReward: number | null;
     /** Frase do cliente mostrada no feedback da última entrega. */
     feedbackLine: string | null;
@@ -66,6 +76,7 @@ export interface AdventureDiagnostics {
     };
     /** Só na NovoHiperInteriorScene: proximidade dos móveis, se há planta para pegar e se a porta está rearmada. */
     interior?: {
+      promptBounds?: { x: number; y: number; width: number; height: number } | null;
       nearShelf: boolean;
       nearStock: boolean;
       nearCounter: boolean;
@@ -120,11 +131,14 @@ export function installDiagnostics(game: Phaser.Game, _input: InputState, contai
         player: base?.player ?? null,
         transitioning: base?.transitioning ?? false,
         goalReached: base?.goalReached ?? false,
+        platform: base?.platform ?? null,
         entranceArmed: base?.entranceArmed ?? false,
         fallRespawns: base?.fallRespawns ?? 0,
         lastSafeGround: (base as { lastSafeGround?: { x: number; y: number } } | undefined)?.lastSafeGround ?? null,
         sprite: (base as Pick<AdventureDiagnostics, 'sprite'> | undefined)?.sprite ?? null,
         delivery: (base as Pick<AdventureDiagnostics, 'delivery'> | undefined)?.delivery ?? null,
+        neighbors: base?.neighbors,
+        residentGarden: base?.residentGarden,
         instance: (base as Pick<AdventureDiagnostics, 'instance'> | undefined)?.instance,
         camera: (base as Pick<AdventureDiagnostics, 'camera'> | undefined)?.camera ?? null,
         canvasCount: container.querySelectorAll('canvas').length,

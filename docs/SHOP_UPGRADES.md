@@ -23,7 +23,12 @@ Primeiro ciclo completo: **entregar → ganhar dinheiro → comprar → voltar �
 Transação `BEGIN IMMEDIATE` (mesmo padrão de `/deliveries/:id/finish`): estado e saldo são lidos dentro da transação; só há operações síncronas do SQLite lá dentro. Rede de segurança: PK de `shop_upgrades` e PK do débito.
 
 ## Fluxo no jogo
-Loja de Utilidades (prédio do quarteirão sul-central, calçada da H3) → painel de compra → Novo Hiper (calçada da porta) → "Instalar" → a fachada muda. O Phaser só emite intents (`openShop`, `openInstall`); o React fala com a API e publica o estado no snapshot (saldo, melhorias instaladas/pendentes).
+Loja de Utilidades (prédio do quarteirão sul-central, calçada da H3) → painel de compra → entrar na Novo Hiper → interagir no balcão → "Instalar" → a fachada muda. O Phaser só emite intents (`openShop`, `openInstall`); o React fala com a API e publica o estado no snapshot (saldo, melhorias instaladas/pendentes).
+
+A progressão visual é consultada após mudanças confirmadas, ao reconectar,
+retornar à janela e receber um aviso de outra aba. Enquanto o jogo está visível,
+a consulta ocorre também a cada 10 segundos. Respostas antigas não substituem
+consultas mais recentes; falhas conservam o último estágio confirmado.
 
 ## Catálogo
 | Melhoria | Preço | Estado |

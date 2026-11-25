@@ -12,6 +12,18 @@ afterEach(async () => {
 });
 
 describe('pedidos — comportamento ATUAL', () => {
+  it('pronto sem estoque é recusado; reposição permite preparar sem debitar estoque ou caixa', async () => {
+    const p = await createPlant(s, { stock_quantity: 0 });
+    const order = await createOrder(s, [{ plant_id: p.id }]);
+    const refused = await s.put(`/api/orders/${order.id}`, { status: 'pronto' });
+    expect(refused.status).toBe(409);
+    expect(refused.body.code).toBe('ORDER_STOCK_INSUFFICIENT');
+    expect((await s.get(`/api/orders/${order.id}`)).body.status).toBe('recebido');
+    await s.put(`/api/plants/${p.id}`, { name: p.name, price: p.price, stock_quantity: 5 });
+    expect((await s.put(`/api/orders/${order.id}`, { status: 'pronto' })).status).toBe(200);
+    expect(await stockOf(s, p.id)).toBe(5);
+    expect(await cashRows(s)).toEqual([]);
+  });
   it('cria pedido com cliente novo, itens, total e número sequencial (101, 102…)', async () => {
     const a = await createPlant(s, { price: 10 });
     const b = await createPlant(s, { price: 7.5 });

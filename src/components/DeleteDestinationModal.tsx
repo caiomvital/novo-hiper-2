@@ -1,4 +1,5 @@
-import React from 'react';
+import { useModalFocus } from '../hooks/useModalFocus';
+import React, { useEffect, useState } from 'react';
 import { DeliveryDestination } from '../types';
 import { sounds } from '../services/sound';
 import { AlertTriangle, Trash2, X, MapPin, User } from 'lucide-react';
@@ -16,6 +17,9 @@ export const DeleteDestinationModal: React.FC<DeleteDestinationModalProps> = ({
   onClose,
   onConfirm,
 }) => {
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => { setError(null); }, [destination, isOpen]);
+  useModalFocus(isOpen, 'delete-destination-modal', 'Excluir endereço', onClose);
   if (!isOpen || !destination) return null;
 
   return (
@@ -46,6 +50,7 @@ export const DeleteDestinationModal: React.FC<DeleteDestinationModalProps> = ({
         </div>
 
         <div className="py-4 text-xs sm:text-sm text-stone-600 space-y-2">
+          {error && <p role="alert" className="text-rose-700">{error}</p>}
           <p>
             Deseja remover o endereço de <strong>{destination.name}</strong> do mapa de entregas?
           </p>
@@ -71,7 +76,7 @@ export const DeleteDestinationModal: React.FC<DeleteDestinationModalProps> = ({
             type="button"
             onClick={() => {
               sounds.playDeleteConfirm();
-              onConfirm();
+              try { onConfirm(); } catch (error) { setError(error instanceof Error ? error.message : 'Não foi possível remover. Tente novamente.'); }
             }}
             className="px-4 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-700 active:bg-rose-800 text-white font-display font-bold text-xs sm:text-sm shadow-xs transition-colors cursor-pointer flex items-center gap-1.5"
           >

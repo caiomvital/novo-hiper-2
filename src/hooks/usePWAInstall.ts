@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+const consumedPrompts = new WeakSet<Event>();
 
 export interface BeforeInstallPromptEvent extends Event {
   prompt: () => Promise<void>;
@@ -38,24 +39,29 @@ export function usePWAInstall() {
 
     window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
     window.addEventListener('appinstalled', handleAppInstalled);
+    const consumed = () => setDeferredPrompt(null);
+    window.addEventListener('novo-hiper-install-consumed', consumed);
 
     return () => {
       window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
       window.removeEventListener('appinstalled', handleAppInstalled);
+      window.removeEventListener('novo-hiper-install-consumed', consumed);
     };
   }, []);
 
   const install = async (): Promise<boolean> => {
-    if (!deferredPrompt) return false;
+    if (!deferredPrompt || consumedPrompts.has(deferredPrompt)) return false;
+    consumedPrompts.add(deferredPrompt);
+    window.dispatchEvent(new Event('novo-hiper-install-consumed'));
     try {
       await deferredPrompt.prompt();
       const { outcome } = await deferredPrompt.userChoice;
+      setDeferredPrompt(null);
       if (outcome === 'accepted') {
-        setIsInstalled(true);
-        setDeferredPrompt(null);
         return true;
       }
     } catch (err) {
+      setDeferredPrompt(null);
       console.error('Erro ao acionar instalação do PWA:', err);
     }
     return false;

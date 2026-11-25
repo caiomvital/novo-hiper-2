@@ -3,6 +3,7 @@ import { getDb } from '../db';
 import crypto from 'crypto';
 import { evaluateMilestonesSafe } from '../progress/milestones';
 import { ensureOrderSafe } from '../orders/ensureOrder';
+import { parsePlantPrice, parsePlantStock } from '../../src/shared/plantNumbers';
 
 export const plantsRouter = Router();
 
@@ -106,19 +107,19 @@ plantsRouter.post('/', async (req: Request, res: Response) => {
       return;
     }
 
-    const parsedPrice = parseFloat(price);
-    if (isNaN(parsedPrice) || parsedPrice < 0) {
+    const parsedPrice = parsePlantPrice(price);
+    if (parsedPrice === null) {
       res.status(400).json({ error: 'Preço deve ser um número maior ou igual a zero.' });
       return;
     }
 
-    const parsedStock = parseInt(stock_quantity, 10);
-    if (isNaN(parsedStock) || parsedStock < 0) {
+    const parsedStock = parsePlantStock(stock_quantity);
+    if (parsedStock === null) {
       res.status(400).json({ error: 'Quantidade em estoque deve ser um número inteiro maior ou igual a zero.' });
       return;
     }
 
-    if (!image_path || typeof image_path !== 'string') {
+    if (typeof image_path !== 'string' || !image_path.trim()) {
       res.status(400).json({ error: 'Caminho da foto da planta é obrigatório.' });
       return;
     }
@@ -126,21 +127,37 @@ plantsRouter.post('/', async (req: Request, res: Response) => {
     const plantId = (id && typeof id === 'string' && id.trim()) ? id.trim() : `plant_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
     const now = Date.now();
     const db = await getDb();
+    if ((species != null && typeof species !== 'string') || (care_tag != null && typeof care_tag !== 'string')) {
+      res.status(400).json({ error: 'Espécie e cuidados devem ser textos.' });
+      return;
+    }
 
-    await db.run(`
+    const inserted = await db.run(`
       INSERT INTO plants (id, name, price, stock_quantity, image_path, species, care_tag, created_at, updated_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO NOTHING
     `, [
       plantId,
       name.trim(),
       parsedPrice,
       parsedStock,
       image_path.trim(),
-      species ? species.trim() : null,
-      care_tag ? care_tag.trim() : null,
+      species?.trim() || null,
+      care_tag?.trim() || null,
       now,
       now,
     ]);
+
+    if (!inserted.changes) {
+      const existing = await db.get('SELECT * FROM plants WHERE id = ?', plantId);
+      const same = existing && existing.deleted_at == null && existing.name === name.trim()
+        && existing.price === parsedPrice && existing.stock_quantity === parsedStock
+        && existing.image_path === image_path.trim() && existing.species === (species?.trim() || null)
+        && existing.care_tag === (care_tag?.trim() || null);
+      if (same) res.status(200).json(existing);
+      else res.status(409).json({ code: 'PLANT_ID_CONFLICT', error: 'Este cadastro já foi recebido com outros dados. Recarregue o catálogo para conferir a planta.' });
+      return;
+    }
 
     await evaluateMilestonesSafe(db); // primeira_planta, plantas_cadastradas_3, bairro_vivo…
     await ensureOrderSafe(db); // evento: planta nova → o backend verifica se cabe um pedido
@@ -178,19 +195,24 @@ plantsRouter.put('/:id', async (req: Request, res: Response) => {
       return;
     }
 
-    const parsedPrice = parseFloat(price);
-    if (isNaN(parsedPrice) || parsedPrice < 0) {
+    const parsedPrice = parsePlantPrice(price);
+    if (parsedPrice === null) {
       res.status(400).json({ error: 'Preço deve ser um número maior ou igual a zero.' });
       return;
     }
 
-    const parsedStock = parseInt(stock_quantity, 10);
-    if (isNaN(parsedStock) || parsedStock < 0) {
+    const parsedStock = parsePlantStock(stock_quantity);
+    if (parsedStock === null) {
       res.status(400).json({ error: 'Quantidade em estoque deve ser um número inteiro maior ou igual a zero.' });
       return;
     }
 
-    const image = (image_path && typeof image_path === 'string') ? image_path.trim() : existing.image_path;
+    if ((image_path !== undefined && (typeof image_path !== 'string' || !image_path.trim()))
+      || (species != null && typeof species !== 'string') || (care_tag != null && typeof care_tag !== 'string')) {
+      res.status(400).json({ error: 'Informe uma foto válida; espécie e cuidados devem ser textos.' });
+      return;
+    }
+    const image = image_path === undefined ? existing.image_path : image_path.trim();
     const now = Date.now();
 
     await db.run(`
@@ -202,8 +224,8 @@ plantsRouter.put('/:id', async (req: Request, res: Response) => {
       parsedPrice,
       parsedStock,
       image,
-      species ? species.trim() : null,
-      care_tag ? care_tag.trim() : null,
+      species?.trim() || null,
+      care_tag?.trim() || null,
       now,
       id,
     ]);

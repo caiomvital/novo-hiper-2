@@ -149,12 +149,12 @@ describe('planta removida — catálogo (A) e operações novas (C)', () => {
     expect((await s.put(`/api/plants/${p.id}`, { name: 'Editada', price: 11, stock_quantity: 6 })).status).toBe(200);
   });
 
-  it('POST com o id de uma planta removida não "ressuscita" nem sobrescreve (conflito de PK → 500 atual, B7)', async () => {
+  it('POST com o id de uma planta removida não "ressuscita" nem sobrescreve (409)', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
     const p = await createPlant(s, { id: 'p_fixa', name: 'Original' });
     await s.del(`/api/plants/${p.id}`);
     const res = await s.post('/api/plants', { id: 'p_fixa', name: 'Outra', price: 1, stock_quantity: 1, image_path: '/a.jpg' });
-    expect(res.status).toBe(500); // comportamento atual para id repetido (B7); a linha original segue removida e intacta
+    expect(res.status).toBe(409);
     const r = await row('p_fixa');
     expect(r.name).toBe('Original');
     expect(r.deleted_at).not.toBeNull();

@@ -1,0 +1,113 @@
+import { expect, test } from '@playwright/test';
+import { login } from './helpers';
+import { closeSuiteOrders, createSuiteOrder, suiteId } from './suiteData';
+const key = 'novo_hiper_destinos_olinda_v1';
+const stored = (page: any) => page.evaluate((k: string) => JSON.parse(localStorage.getItem(k) || '[]'), key);
+test.beforeEach(async ({ page }) => {
+  await page.route('**/*.basemaps.cartocdn.com/**', route => route.abort());
+  await login(page);
+});
+
+test('J01/J04–J07: consulta avulsa não vende; cadastrar, editar, buscar, cancelar exclusão e persistir localmente', async ({ page, browser, baseURL }) => {
+  const p = await (await page.request.post('/api/plants', { data: { id: suiteId('map'), name: 'Planta avulsa', price: 20, stock_quantity: 5, image_path: '/pwa-192x192.png' } })).json();
+  await page.reload(); await page.locator('#tab-btn-deliveries').click();
+  await expect(page.getByText('Este mapa geográfico é diferente', { exact: false })).toBeVisible();
+  await expect(page.getByText('Endereços personalizados ficam somente neste navegador.', { exact: false })).toBeVisible();
+  await expect(page.locator('#btn-confirm-delivery')).toBeDisabled();
+  const before = await (await page.request.get('/api/cash')).json();
+  await page.locator('#btn-confirm-delivery').evaluate((el: HTMLButtonElement) => el.click());
+  expect((await (await page.request.get('/api/cash')).json()).balance).toBe(before.balance);
+  expect((await (await page.request.get(`/api/plants/${p.id}`)).json()).stock_quantity).toBe(5);
+
+  await page.locator('#btn-add-destination-header').click();
+  await page.locator('#input-dest-name').fill('Cliente <b>Literal</b>');
+  await page.locator('#input-dest-address').fill('Rua do Amparo, 84');
+  await page.locator('#destination-form-modal button[type=submit]').click();
+  await expect(page.locator('#destination-form-modal')).toHaveCount(0);
+  const added = (await stored(page)).find((d: any) => d.name === 'Cliente <b>Literal</b>');
+  const card = page.locator(`#dest-card-${added.id}`);
+  await expect(card).toBeVisible();
+  await expect(page.locator(`#pin-${added.id}`)).toContainText('Cliente <b>Literal</b>');
+  await expect(page.locator(`#pin-${added.id} b`)).toHaveCount(0);
+  await card.getByTitle('Editar endereço').click();
+  await page.locator('#input-dest-name').fill('Cliente Jardim');
+  await page.locator('#input-dest-address').fill('Avenida Olinda, 152');
+  await page.locator('#destination-form-modal button[type=submit]').click();
+  const edited = (await stored(page)).find((d: any) => d.id === added.id);
+  expect([edited.lat, edited.lng]).not.toEqual([added.lat, added.lng]);
+  await page.getByPlaceholder('Buscar por nome do cliente ou rua...').fill('Cliente Jardim');
+  await expect(page.locator('[id^=dest-card-]')).toHaveCount(1);
+  await card.getByTitle('Remover endereço').click();
+  await page.locator('#delete-destination-modal').getByRole('button', { name: 'Voltar', exact: true }).click();
+  await expect(card).toBeVisible();
+  await page.reload(); await page.locator('#tab-btn-deliveries').click();
+  await expect(card).toBeVisible();
+  const context = await browser.newContext();
+  try { const other = await context.newPage(); await other.goto(baseURL!); expect((await stored(other)).some((d: any) => d.id === added.id)).toBe(false); }
+  finally { await context.close(); }
+  await card.getByTitle('Remover endereço').click();
+  await page.locator('#btn-confirm-delete-destination').click();
+  await expect(card).toHaveCount(0);
+  await expect(page.locator(`#pin-${added.id}`)).toHaveCount(0);
+});
+
+test('J02/J03/J08: mapa indisponível não troca o destinatário; pedido pronto vende quantidade e preço congelados', async ({ page }) => {
+  await closeSuiteOrders(page);
+  const plant = await (await page.request.post('/api/plants', { data: { id: suiteId('map'), name: 'Planta do pedido mapa', price: 20, stock_quantity: 5, image_path: '/pwa-192x192.png' } })).json();
+  const order = await createSuiteOrder(page, { plantId: plant.id, quantity: 2, customerName: 'Cliente Bairro', destination: 'bairro1/house_021' });
+  expect((await page.request.put(`/api/orders/${order.id}`, { data: { status: 'pronto' } })).ok()).toBe(true);
+  await page.request.put(`/api/plants/${plant.id}`, { data: { name: plant.name, price: 99, stock_quantity: 5 } });
+  const before = await (await page.request.get('/api/cash')).json();
+  await page.reload(); await page.locator('#tab-btn-orders').click();
+  await page.locator(`#order-card-${order.id}`).getByRole('button', { name: 'Ou ver rota no Mapa Clássico' }).click();
+  await expect(page.locator('#map-order-destination')).toContainText('Cliente Bairro');
+  await expect(page.locator('.leaflet-overlay-pane path')).toHaveCount(0);
+  await expect(page.getByText('O mapa externo não carregou.', { exact: false })).toBeVisible();
+  await page.locator('[id^=dest-card-]').first().click();
+  await expect(page.locator('#map-order-destination')).toContainText('Cliente Bairro');
+  await expect(page.locator('.leaflet-overlay-pane path')).toHaveCount(0);
+  await page.locator('#btn-confirm-delivery').dblclick();
+  await expect(page.getByText(/40,00 adicionados ao Caixa Virtual da Loja/)).toBeVisible();
+  await expect(page.locator('#map-delivery-summary')).toContainText('Cliente Bairro');
+  await expect(page.locator('#map-delivery-summary')).not.toContainText('99,00');
+  await expect(page.locator('.leaflet-overlay-pane path')).toHaveCount(0);
+  const after = await (await page.request.get('/api/cash')).json();
+  expect(after.balance).toBe(before.balance + 40);
+  expect(after.transactions.filter((t: any) => t.order_id === order.id)).toHaveLength(1);
+  expect((await (await page.request.get(`/api/plants/${plant.id}`)).json()).stock_quantity).toBe(3);
+  expect((await (await page.request.get(`/api/orders/${order.id}`)).json()).status).toBe('entregue');
+  await page.screenshot({ path: 'docs/evidence/milestone-seven/venda-mapa.png', fullPage: true });
+  await page.reload();
+  expect((await (await page.request.get('/api/cash')).json()).balance).toBe(after.balance);
+  await page.locator('#tab-btn-catalog').click();
+  await expect(page.locator('#tab-btn-orders')).toBeVisible();
+});
+
+test('J05/J06/J07: falha ao salvar mantém formulário; excluir último destino remove a rota', async ({ page }) => {
+  await page.evaluate((k) => localStorage.setItem(k, JSON.stringify([{ id: 'dest_custom_only', name: 'Único endereço', address: 'Rua do Amparo', type: 'familia', isCustom: true, lat: -8.02, lng: -34.85, distanceKm: 1 }])), key);
+  await page.reload(); await page.locator('#tab-btn-deliveries').click();
+  await expect(page.locator('.leaflet-overlay-pane path')).toHaveCount(1);
+  await page.locator('#btn-add-destination-header').click();
+  await page.locator('#input-dest-name').fill('Salvar depois');
+  await page.locator('#input-dest-address').fill('Rua nova, 12');
+  await page.evaluate(() => { const original = Storage.prototype.setItem; (window as any).__restoreStorage = () => { Storage.prototype.setItem = original; }; Storage.prototype.setItem = function(k, v) { if (k === 'novo_hiper_destinos_olinda_v1') throw new DOMException('quota', 'QuotaExceededError'); original.call(this, k, v); }; });
+  await page.locator('#destination-form-modal button[type=submit]').click();
+  await expect(page.locator('#destination-form-modal')).toContainText('Não foi possível salvar');
+  expect(await stored(page)).toHaveLength(1);
+  await page.evaluate(() => (window as any).__restoreStorage());
+  await page.locator('#destination-form-modal button[type=submit]').click();
+  await expect(page.locator('#destination-form-modal')).toHaveCount(0);
+  const added = (await stored(page)).find((d: any) => d.name === 'Salvar depois');
+  await page.locator(`#dest-card-${added.id}`).getByTitle('Remover endereço').click();
+  await page.locator('#btn-confirm-delete-destination').click();
+  await expect(page.locator('#pin-dest_custom_only')).toBeVisible();
+  await expect(page.locator('.leaflet-overlay-pane path')).toHaveCount(1);
+  await page.locator('#dest-card-dest_custom_only').getByTitle('Remover endereço').click();
+  await page.locator('#btn-confirm-delete-destination').click();
+  await expect(page.locator('[id^=dest-card-]')).toHaveCount(0);
+  await expect(page.locator('.leaflet-overlay-pane path')).toHaveCount(0);
+  await page.screenshot({ path: 'docs/evidence/milestone-seven/mapa-sem-destinos.png', fullPage: true });
+  await page.reload(); await page.locator('#tab-btn-deliveries').click();
+  await expect(page.locator('[id^=dest-card-]')).toHaveCount(0);
+  await expect(page.locator('.leaflet-overlay-pane path')).toHaveCount(0);
+});

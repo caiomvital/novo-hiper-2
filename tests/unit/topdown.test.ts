@@ -51,7 +51,7 @@ describe('layout do spritesheet e collider', () => {
   });
 
   it('o PNG derivado tem exatamente 5 colunas x 4 linhas de 72x80', () => {
-    const file = path.resolve('public/assets/bernardo-sprites/topdown/bernardo-topdown.png');
+    const file = path.resolve('final-assets/bernardo/bernardo-topdown.png');
     const buf = fs.readFileSync(file);
     expect(buf.subarray(1, 4).toString()).toBe('PNG');
     const width = buf.readUInt32BE(16);

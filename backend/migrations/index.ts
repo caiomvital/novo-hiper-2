@@ -5,6 +5,8 @@ import { migration003Sessions } from './003_sessions';
 import { migration004OrdersDestination } from './004_orders_destination';
 import { migration005ShopUpgrades } from './005_shop_upgrades';
 import { migration006Milestones } from './006_milestones';
+import { migration007StoryAcknowledgements } from './007_story_acknowledgements';
+import { migration008ResidentStories } from './008_resident_stories';
 
 /** Lista oficial, em ordem. Novas migrations entram SEMPRE no final. */
-export const MIGRATIONS: Migration[] = [migration001Baseline, migration002PlantsDeletedAt, migration003Sessions, migration004OrdersDestination, migration005ShopUpgrades, migration006Milestones];
+export const MIGRATIONS: Migration[] = [migration001Baseline, migration002PlantsDeletedAt, migration003Sessions, migration004OrdersDestination, migration005ShopUpgrades, migration006Milestones, migration007StoryAcknowledgements, migration008ResidentStories];

@@ -1,4 +1,6 @@
+import type { ResidentStory } from '../shared/residentStory';
 import { UNAUTHORIZED_EVENT } from './auth';
+import { API_UNAVAILABLE, BUSINESS_MUTATION, notifyBusinessChanged } from './businessEvents';
 import { Plant, DeliveryRecord, CustomerOrder, OrderStatus, CashRegister, SaleRecord } from '../types';
 
 export type EnsureReason = 'active_order' | 'cooldown' | 'no_plants' | 'no_stock' | 'no_customers' | 'disabled';
@@ -22,6 +24,10 @@ export type ObraLesteStage = 'parada' | 'ativa' | 'quase_pronta';
 export interface WorldStage {
   obraLeste: ObraLesteStage;
   environmentalNeighbors: number;
+  arcCompletedAt?: number | null;
+  arcSeen?: boolean;
+  firstDeliveryAt?: number | null;
+  residentStory?: ResidentStory;
 }
 
 const API_BASE = import.meta.env.VITE_API_URL || '/api';
@@ -37,33 +43,42 @@ class ApiClient {
       headers['Content-Type'] = 'application/json';
     }
 
-    const response = await fetch(url, {
-      ...options,
-      headers,
-      credentials: 'same-origin', // cookie de sessão HttpOnly (mesma origem)
-    });
-
-    // Sessão inválida/expirada no servidor: avisa a aplicação (volta ao login sem apagar dados do negócio)
-    if (response.status === 401 && typeof window !== 'undefined') {
-      window.dispatchEvent(new Event(UNAUTHORIZED_EVENT));
-    }
-
-    if (!response.ok) {
-      let errorMessage = `Erro na requisição (${response.status})`;
-      let code: string | undefined;
-      try {
-        const errJson = await response.json();
-        if (errJson?.error) {
-          errorMessage = errJson.error;
-        }
-        if (typeof errJson?.code === 'string') code = errJson.code;
-      } catch {
-        // Ignora caso não seja JSON
+    const mutation = /^(POST|PUT|PATCH|DELETE)$/.test(options?.method ?? 'GET')
+      && /^\/(plants(?:\/|$)|orders\/[^/]+$|deliveries(?:\/|$)|shop\/|progress\/(?:celebrations|stories)\/)/.test(endpoint)
+      && endpoint !== '/orders/ensure';
+    if (mutation) window.dispatchEvent(new CustomEvent(BUSINESS_MUTATION, { detail: 'start' }));
+    try {
+      const response = await fetch(url, {
+        ...options, headers, credentials: 'same-origin',
+        signal: options?.signal ?? AbortSignal.timeout(options?.body instanceof FormData ? 30000 : 15000),
+      });
+      if (response.status === 401) window.dispatchEvent(new Event(UNAUTHORIZED_EVENT));
+      if (response.status >= 500) window.dispatchEvent(new Event(API_UNAVAILABLE));
+      if (!response.ok) {
+        let errorMessage = `Erro na requisição (${response.status})`;
+        let code: string | undefined;
+        try {
+          const errJson = await response.json();
+          if (errJson?.error) errorMessage = errJson.error;
+          if (typeof errJson?.code === 'string') code = errJson.code;
+        } catch { /* resposta não JSON */ }
+        throw Object.assign(new Error(errorMessage), { code });
       }
-      throw Object.assign(new Error(errorMessage), { code });
+      const data = await response.json();
+      if (endpoint === '/orders/ensure' && data.created) notifyBusinessChanged();
+      return data;
+    } catch (error) {
+      if (error instanceof TypeError || (error instanceof Error && ['TimeoutError', 'AbortError'].includes(error.name))) {
+        window.dispatchEvent(new Event(API_UNAVAILABLE));
+      }
+      throw error;
+    } finally {
+      if (mutation) {
+        // Mesmo sem resposta, o servidor pode ter gravado. Todas as abas conferem.
+        notifyBusinessChanged();
+        window.dispatchEvent(new CustomEvent(BUSINESS_MUTATION, { detail: 'end' }));
+      }
     }
-
-    return response.json();
   }
 
   // Checagem de disponibilidade do backend
@@ -102,6 +117,7 @@ class ApiClient {
   }): Promise<Plant> {
     const created = await this.request<any>('/plants', {
       method: 'POST',
+      signal: AbortSignal.timeout(15000),
       body: JSON.stringify({
         id: plant.id,
         name: plant.name,
@@ -134,6 +150,7 @@ class ApiClient {
   }): Promise<Plant> {
     const updated = await this.request<any>(`/plants/${encodeURIComponent(id)}`, {
       method: 'PUT',
+      signal: AbortSignal.timeout(15000),
       body: JSON.stringify({
         name: plant.name,
         price: plant.price,
@@ -158,6 +175,7 @@ class ApiClient {
   async deletePlant(id: string): Promise<boolean> {
     const res = await this.request<{ success: boolean }>(`/plants/${encodeURIComponent(id)}`, {
       method: 'DELETE',
+      signal: AbortSignal.timeout(15000),
     });
     return res.success;
   }
@@ -173,6 +191,7 @@ class ApiClient {
 
     const res = await this.request<{ success: boolean; filePath: string }>('/upload', {
       method: 'POST',
+      signal: AbortSignal.timeout(30000),
       body: formData,
     });
 
@@ -181,7 +200,7 @@ class ApiClient {
 
   // --- Pedidos ---
   async getOrders(): Promise<CustomerOrder[]> {
-    const data = await this.request<any[]>('/orders');
+    const data = await this.request<any[]>('/orders', { signal: AbortSignal.timeout(15000) });
     return data.map((o) => {
       const firstItem = o.items?.[0];
       return {
@@ -212,13 +231,14 @@ class ApiClient {
    * é o backend; o cliente só recebe o resultado.
    */
   async ensureOrder(): Promise<{ created: boolean; reason?: EnsureReason }> {
-    const r = await this.request<{ created: boolean; reason?: EnsureReason }>('/orders/ensure', { method: 'POST', body: JSON.stringify({}) });
+    const r = await this.request<{ created: boolean; reason?: EnsureReason }>('/orders/ensure', { method: 'POST', body: JSON.stringify({}), signal: AbortSignal.timeout(15000) });
     return { created: r.created, reason: r.reason };
   }
 
   async updateOrderStatus(id: string, status: OrderStatus): Promise<void> {
     await this.request(`/orders/${encodeURIComponent(id)}`, {
       method: 'PUT',
+      signal: AbortSignal.timeout(15000),
       body: JSON.stringify({ status }),
     });
   }
@@ -226,7 +246,8 @@ class ApiClient {
   // --- Entregas ---
   async getDeliveries(): Promise<DeliveryRecord[]> {
     const data = await this.request<any[]>('/deliveries');
-    return data.map((d) => ({
+    // Retirar o vaso inicia uma entrega; apenas finish a inclui nas entregas feitas.
+    return data.filter((d) => d.status === 'entregue').map((d) => ({
       id: d.id,
       plantId: '',
       plantName: `Pedido #${d.order_number || d.order_id}`,
@@ -243,6 +264,7 @@ class ApiClient {
   async startDelivery(orderId: string, gameState?: any): Promise<any> {
     return this.request<any>('/deliveries/start', {
       method: 'POST',
+      signal: AbortSignal.timeout(15000),
       body: JSON.stringify({ order_id: orderId, game_state: gameState }),
     });
   }
@@ -263,22 +285,24 @@ class ApiClient {
   }> {
     return this.request<any>(`/deliveries/${encodeURIComponent(deliveryId)}/finish`, {
       method: 'POST',
+      signal: AbortSignal.timeout(15000),
     });
   }
 
   // --- Caixa ---
   async getCashRegister(): Promise<CashRegister> {
     const data = await this.request<any>('/cash');
-    const salesHistory: SaleRecord[] = (data.transactions || []).map((t: any) => ({
+    const salesHistory: SaleRecord[] = (data.transactions || []).filter((t: any) => t.type === 'credit').map((t: any) => ({
       id: t.id,
       orderId: t.order_id || undefined,
       deliveryId: t.delivery_id || t.id,
-      plantId: '',
-      plantName: t.description || 'Venda',
+      plantId: t.items?.[0]?.plant_id || '',
+      plantName: t.items?.length ? t.items.map((item: any) => `${item.quantity} × ${item.plant_name || 'Planta'}`).join(', ') : t.description || 'Venda',
+      plantPhotoUrl: t.items?.[0]?.plant_photo_url || undefined,
       value: Number(t.amount || 0),
       timestamp: t.created_at,
       customerName: t.customer_name || 'Cliente',
-      destinationName: t.destination_name || 'Olinda',
+      destinationName: t.customer_address || (t.customer_name ? `Casa de ${t.customer_name}` : 'Casa do cliente'),
     }));
 
     return {
@@ -295,8 +319,20 @@ class ApiClient {
 
   /** Progressão 2B: só o `worldStage` interessa ao mundo (o backend decide; o frontend renderiza). */
   async getWorldStage(): Promise<WorldStage> {
-    const data = await this.request<{ worldStage: WorldStage }>('/progress');
-    return data.worldStage;
+    const data = await this.request<{ worldStage: WorldStage; milestones: Record<string, { achievedAt: number | null }>; story: { bairroVivoSeenAt: number | null }; residentStory: ResidentStory }>('/progress');
+    return { ...data.worldStage, arcCompletedAt: data.milestones.bairro_vivo.achievedAt, arcSeen: Boolean(data.story.bairroVivoSeenAt), firstDeliveryAt: data.milestones.primeira_entrega?.achievedAt ?? null, residentStory: data.residentStory };
+  }
+
+  async acceptResidentStory(): Promise<ResidentStory> {
+    return this.request('/progress/stories/cantinho_maria/accept', { method: 'POST', body: '{}' });
+  }
+
+  async acknowledgeResidentStory(): Promise<ResidentStory> {
+    return this.request('/progress/stories/cantinho_maria/ack', { method: 'POST', body: '{}' });
+  }
+
+  async acknowledgeStory(): Promise<{ seenAt: number }> {
+    return this.request('/progress/celebrations/bairro_vivo/ack', { method: 'POST', body: '{}' });
   }
 
   async purchaseShopUpgrade(id: string): Promise<ShopSnapshot & { alreadyApplied: boolean }> {

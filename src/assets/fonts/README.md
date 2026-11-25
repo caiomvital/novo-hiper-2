@@ -1,0 +1,1 @@
+Fontes originais Outfit (500–800) e Plus Jakarta Sans (400–800), formato variável WOFF2, obtidas de fonts.googleapis.com/fonts.gstatic.com em 2026-10-18. Declarações e subconjuntos preservados em src/fonts.css, com font-display: swap. Licenças SIL Open Font License anexas. Servidas localmente para que a abertura não dependa de CDNs externos.
